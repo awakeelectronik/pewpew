@@ -9,6 +9,10 @@ bin/
 go.sum
 *.out
 
+# Frontend
+web/node_modules/
+web/dist/
+
 # IDE
 .vscode/
 .idea/
