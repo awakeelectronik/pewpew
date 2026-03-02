@@ -101,7 +101,7 @@ func (s *SQLiteStore) InsertEventsBatch(events []*domain.SecurityEvent) error {
 		}
 	}
 
-	return tx.Commit().Error
+	return tx.Commit()
 }
 
 // InsertBan inserta una acción de baneo
