@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 )
 
 // UFWBackend implementa operaciones de firewall con UFW
@@ -27,9 +26,9 @@ func (u *UFWBackend) Ban(ip string) error {
 	}
 
 	u.mu.Lock()
-	defer tu.mu.Unlock()
+	defer u.mu.Unlock()
 
-	cmd := exec.Command("sudo", "ufw", "deny", "from", ip)
+	cmd := exec.Command("ufw", "deny", "from", ip)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("UFW ban failed: %s", string(output))
@@ -49,7 +48,7 @@ func (u *UFWBackend) Unban(ip string) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	cmd := exec.Command("sudo", "ufw", "delete", "deny", "from", ip)
+	cmd := exec.Command("ufw", "delete", "deny", "from", ip)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("UFW unban failed: %s", string(output))
@@ -65,7 +64,7 @@ func (u *UFWBackend) IsBanned(ip string) (bool, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	cmd := exec.Command("sudo", "ufw", "status", "numbered")
+	cmd := exec.Command("ufw", "status", "numbered")
 	output, err := cmd.Output()
 	if err != nil {
 		return false, err
