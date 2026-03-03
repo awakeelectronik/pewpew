@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"sync"
+	"time"
 
 	"pewpew/internal/domain"
 
@@ -15,6 +16,13 @@ type Store interface {
 	InsertEventsBatch(events []*domain.SecurityEvent) error
 	InsertBan(ban *domain.BanAction) error
 	GetRecentEvents(limit int) ([]*domain.SecurityEvent, error)
+	GetTopAttackers(limit int) ([]*domain.AttackerStat, error)
+	GetDBSize() int64
+	GetEventCount() int64
+	GetActiveBanCount() int64
+	GetActiveBans() ([]*domain.BanAction, error)
+	GetRecentFindingCount(hours int) int64
+	DeactivateBan(ip string) error
 	Close() error
 }
 
@@ -67,8 +75,19 @@ func (s *SQLiteStore) Migrate() error {
 		active BOOLEAN DEFAULT 1
 	);
 
+	CREATE TABLE IF NOT EXISTS findings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+		severity TEXT NOT NULL,
+		category TEXT NOT NULL,
+		target TEXT NOT NULL,
+		evidence TEXT NOT NULL,
+		recommendation TEXT NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_events_ip ON events(ip);
 	CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_findings_ts ON findings(ts);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -145,7 +164,168 @@ func (s *SQLiteStore) GetRecentEvents(limit int) ([]*domain.SecurityEvent, error
 	return events, rows.Err()
 }
 
+// GetTopAttackers retorna IPs con mas eventos recientes.
+func (s *SQLiteStore) GetTopAttackers(limit int) ([]*domain.AttackerStat, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query(`
+		SELECT
+			e.ip,
+			COUNT(*) as total,
+			MAX(e.timestamp) as last_seen,
+			COALESCE(MAX(e.country), '') as country,
+			COALESCE(MAX(e.city), '') as city,
+			COALESCE(
+				(
+					SELECT e2.event_type
+					FROM events e2
+					WHERE e2.ip = e.ip
+					ORDER BY e2.timestamp DESC
+					LIMIT 1
+				),
+				''
+			) as last_type,
+			CASE WHEN EXISTS (
+				SELECT 1 FROM bans b WHERE b.ip = e.ip AND b.active = 1
+			) THEN 1 ELSE 0 END as banned
+		FROM events e
+		GROUP BY e.ip
+		ORDER BY total DESC, last_seen DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*domain.AttackerStat
+	for rows.Next() {
+		a := &domain.AttackerStat{}
+		var banned int
+		var lastSeenRaw string
+		if err := rows.Scan(&a.IP, &a.Count, &lastSeenRaw, &a.Country, &a.City, &a.LastType, &banned); err != nil {
+			return nil, err
+		}
+		a.LastSeen = parseSQLiteTime(lastSeenRaw)
+		a.Banned = banned != 0
+		out = append(out, a)
+	}
+
+	return out, rows.Err()
+}
+
+// GetDBSize retorna el tamaño de la base de datos en bytes
+func (s *SQLiteStore) GetDBSize() int64 {
+	var pageCount, pageSize int
+	if err := s.db.QueryRow("PRAGMA page_count").Scan(&pageCount); err != nil {
+		return 0
+	}
+	if err := s.db.QueryRow("PRAGMA page_size").Scan(&pageSize); err != nil {
+		return 0
+	}
+	return int64(pageCount) * int64(pageSize)
+}
+
+// GetEventCount retorna el número total de eventos
+func (s *SQLiteStore) GetEventCount() int64 {
+	var n int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM events").Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// GetActiveBanCount retorna el número de bans activos
+func (s *SQLiteStore) GetActiveBanCount() int64 {
+	var n int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM bans WHERE active = 1").Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// GetRecentFindingCount retorna findings recientes para status.
+func (s *SQLiteStore) GetRecentFindingCount(hours int) int64 {
+	var n int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM findings WHERE ts >= datetime('now', ?)", "-"+itoa(hours)+" hours").Scan(&n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// GetActiveBans retorna todos los bans activos
+func (s *SQLiteStore) GetActiveBans() ([]*domain.BanAction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, ip, timestamp, backend, reason, expires_at, created_by, active
+		FROM bans
+		WHERE active = 1
+		ORDER BY timestamp DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var bans []*domain.BanAction
+	for rows.Next() {
+		b := &domain.BanAction{}
+		var active int
+		if err := rows.Scan(&b.ID, &b.IP, &b.Timestamp, &b.Backend, &b.Reason, &b.ExpiresAt, &b.CreatedBy, &active); err != nil {
+			return nil, err
+		}
+		b.Active = active != 0
+		bans = append(bans, b)
+	}
+	return bans, rows.Err()
+}
+
+// DeactivateBan marca un ban como inactivo por IP
+func (s *SQLiteStore) DeactivateBan(ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec("UPDATE bans SET active = 0 WHERE ip = ?", ip)
+	return err
+}
+
 // Close cierra la conexión
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
+}
+
+func itoa(v int) string {
+	if v == 0 {
+		return "0"
+	}
+	sign := ""
+	if v < 0 {
+		sign = "-"
+		v = -v
+	}
+	var buf [20]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + (v % 10))
+		v /= 10
+	}
+	return sign + string(buf[i:])
+}
+
+func parseSQLiteTime(v string) time.Time {
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		time.RFC3339,
+		time.RFC3339Nano,
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t
+		}
+	}
+	return time.Now()
 }

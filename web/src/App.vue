@@ -36,6 +36,9 @@
         >
           Status
         </button>
+        <button :class="['nav-btn', { active: activeTab === 'ports' }]" @click="activeTab = 'ports'">Ports</button>
+        <button :class="['nav-btn', { active: activeTab === 'vulns' }]" @click="activeTab = 'vulns'">Vulns</button>
+        <button :class="['nav-btn', { active: activeTab === 'recs' }]" @click="activeTab = 'recs'">Recommendations</button>
       </nav>
     </header>
 
@@ -56,6 +59,9 @@ import FeedView from './views/FeedView.vue'
 import AttackersView from './views/AttackersView.vue'
 import BansView from './views/BansView.vue'
 import StatusView from './views/StatusView.vue'
+import PortsView from './views/PortsView.vue'
+import VulnsView from './views/VulnsView.vue'
+import RecommendationsView from './views/RecommendationsView.vue'
 import { useStore } from './stores/store.js'
 
 const activeTab = ref('map')
@@ -68,7 +74,10 @@ const currentView = computed(() => {
     feed: FeedView,
     attackers: AttackersView,
     bans: BansView,
-    status: StatusView
+    status: StatusView,
+    ports: PortsView,
+    vulns: VulnsView,
+    recs: RecommendationsView
   }
   return views[activeTab.value]
 })

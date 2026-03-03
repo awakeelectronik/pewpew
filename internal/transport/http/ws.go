@@ -1,7 +1,6 @@
 package http
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
@@ -20,9 +19,10 @@ var upgrader = websocket.Upgrader{
 
 // EventBroadcaster maneja broadcast de eventos a clientes WebSocket
 type EventBroadcaster struct {
-	clients map[*websocket.Conn]bool
-	mu      sync.Mutex
-	eventCh chan *domain.SecurityEvent
+	clients  map[*websocket.Conn]bool
+	writeMu  map[*websocket.Conn]*sync.Mutex // serializa escrituras por conexión (gorilla no permite concurrent write)
+	mu       sync.Mutex
+	eventCh  chan *domain.SecurityEvent
 }
 
 var broadcaster *EventBroadcaster
@@ -31,6 +31,7 @@ var broadcaster *EventBroadcaster
 func InitEventBroadcaster() {
 	broadcaster = &EventBroadcaster{
 		clients: make(map[*websocket.Conn]bool),
+		writeMu: make(map[*websocket.Conn]*sync.Mutex),
 		eventCh: make(chan *domain.SecurityEvent, 100),
 	}
 
@@ -52,16 +53,22 @@ func BroadcastEvent(event *domain.SecurityEvent) {
 func (b *EventBroadcaster) run() {
 	for event := range b.eventCh {
 		b.mu.Lock()
-		for client := range b.clients {
-			go func(c *websocket.Conn, e *domain.SecurityEvent) {
-				if err := c.WriteJSON(e); err != nil {
+		for client, connMu := range b.writeMu {
+			connMu := connMu
+			client := client
+			e := event
+			go func() {
+				connMu.Lock()
+				defer connMu.Unlock()
+				if err := client.WriteJSON(e); err != nil {
 					log.Printf("websocket write error: %v", err)
-					c.Close()
+					client.Close()
 					b.mu.Lock()
-					delete(b.clients, c)
+					delete(b.clients, client)
+					delete(b.writeMu, client)
 					b.mu.Unlock()
 				}
-			}(client, event)
+			}()
 		}
 		b.mu.Unlock()
 	}
@@ -78,6 +85,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	broadcaster.mu.Lock()
 	broadcaster.clients[conn] = true
+	broadcaster.writeMu[conn] = &sync.Mutex{}
 	broadcaster.mu.Unlock()
 
 	log.Println("websocket client connected")
@@ -88,6 +96,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if err := conn.ReadJSON(&msg); err != nil {
 			broadcaster.mu.Lock()
 			delete(broadcaster.clients, conn)
+			delete(broadcaster.writeMu, conn)
 			broadcaster.mu.Unlock()
 			log.Println("websocket client disconnected")
 			break

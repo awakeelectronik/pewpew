@@ -3,6 +3,7 @@ package tail
 import (
 	"bufio"
 	"context"
+	"io"
 	"log"
 	"os"
 	"sync"
@@ -26,6 +27,7 @@ type SSHTailer struct {
 	batchTime  time.Duration
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
+	onEvent    func(event *domain.SecurityEvent)
 }
 
 // NewSSHTailer crea un nuevo tailer eficiente
@@ -34,6 +36,7 @@ func NewSSHTailer(
 	db store.Store,
 	geoip geoip.Resolver,
 	parser func(line string) *parse.SSHEvent,
+	onEvent func(event *domain.SecurityEvent),
 ) *SSHTailer {
 	return &SSHTailer{
 		logPath:   logPath,
@@ -44,6 +47,7 @@ func NewSSHTailer(
 		batchSize: 100,                                     // Batch cada 100 eventos
 		batchTime: 500 * time.Millisecond,                 // O cada 500ms
 		stopCh:    make(chan struct{}),
+		onEvent:   onEvent,
 	}
 }
 
@@ -101,6 +105,9 @@ func (t *SSHTailer) readLoop(ctx context.Context) {
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				// EOF o error; esperar y reintentar (por rotación de logs)
+				if err == io.EOF {
+					continue
+				}
 				continue
 			}
 
@@ -135,6 +142,9 @@ func (t *SSHTailer) readLoop(ctx context.Context) {
 			// Enviar a batch processor
 			select {
 			case t.eventsCh <- event:
+				if t.onEvent != nil {
+					t.onEvent(event)
+				}
 			case <-t.stopCh:
 				return
 			}

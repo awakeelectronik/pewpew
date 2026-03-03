@@ -4,8 +4,9 @@
 web-build:
 	cd web && npm install && npm run build
 
-# Build Go con embed de web
+# Build Go con frontend embebido (copia web/dist → static/dist para //go:embed)
 build: web-build
+	rm -rf static/dist && cp -r web/dist static/
 	go build -o bin/pewpew ./cmd/pewpew
 
 # Desarrollo (frontend + backend separados)

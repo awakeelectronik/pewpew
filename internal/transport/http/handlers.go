@@ -34,7 +34,11 @@ func (s *Server) getEventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	if events == nil {
+		events = []*domain.SecurityEvent{}
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(events)
 }
 
@@ -46,17 +50,13 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := map[string]interface{}{
-		"hostname":         getHostname(),
-		"ssh_log_path":     "/var/log/auth.log", // TODO: desde config
-		"firewall_backend": detectFirewallBackend(),
-		"db_size":          s.db.GetDBSize(),
-		"total_events":     s.db.GetEventCount(),
-		"active_bans":      s.db.GetActiveBanCount(),
-		"version":          "0.1.0-alpha",
-		"uptime_seconds":   getUptime(),
+		"hostname": getHostname(),
+	}
+	for k, v := range s.runtimeStatus() {
+		status[k] = v
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(status)
 }
 
@@ -70,7 +70,10 @@ func (s *Server) bansHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		if bans == nil {
+			bans = []*domain.BanAction{}
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(bans)
 
 	case http.MethodPost:
@@ -163,7 +166,3 @@ func detectFirewallBackend() string {
 	return "none"
 }
 
-func getUptime() int64 {
-	// TODO: implementar uptime tracking
-	return 0
-}

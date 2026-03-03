@@ -29,3 +29,45 @@ type BanAction struct {
 	CreatedBy string    `json:"created_by,omitempty"`
 	Active    bool      `json:"active"`
 }
+
+// AttackerStat representa la agregacion por IP atacante.
+type AttackerStat struct {
+	IP         string    `json:"ip"`
+	Count      int64     `json:"count"`
+	LastSeen   time.Time `json:"last_seen"`
+	Country    string    `json:"country,omitempty"`
+	City       string    `json:"city,omitempty"`
+	LastType   string    `json:"last_type,omitempty"`
+	Banned     bool      `json:"banned"`
+}
+
+// OpenPort representa un puerto abierto detectado localmente.
+type OpenPort struct {
+	Proto      string `json:"proto"`
+	Address    string `json:"address"`
+	Port       int    `json:"port"`
+	Process    string `json:"process,omitempty"`
+	State      string `json:"state"`
+	Risk       string `json:"risk"`
+	Reason     string `json:"reason"`
+	Externally bool   `json:"externally_reachable"`
+}
+
+// VulnerabilityFinding representa un hallazgo de riesgo de red.
+type VulnerabilityFinding struct {
+	ID         string `json:"id"`
+	Severity   string `json:"severity"` // low, medium, high, critical
+	Category   string `json:"category"`
+	Target     string `json:"target"`
+	Evidence   string `json:"evidence"`
+	Recommendation string `json:"recommendation"`
+}
+
+// Recommendation representa una recomendacion de hardening.
+type Recommendation struct {
+	ID        string `json:"id"`
+	Severity  string `json:"severity"` // ok, warn, critical
+	Title     string `json:"title"`
+	Details   string `json:"details"`
+	Command   string `json:"command,omitempty"`
+}

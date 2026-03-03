@@ -6,6 +6,9 @@ const state = reactive({
   bans: [],
   topAttackers: [],
   status: null,
+  ports: [],
+  vulnerabilities: [],
+  recommendations: [],
   wsConnected: false
 })
 
@@ -73,12 +76,49 @@ export function useStore() {
     }
   }
 
+  const fetchAttackers = async () => {
+    try {
+      const { data } = await axios.get('/api/attackers')
+      state.topAttackers = data || []
+    } catch (err) {
+      console.error('Failed to fetch attackers:', err)
+      updateTopAttackers()
+    }
+  }
+
   const fetchStatus = async () => {
     try {
       const { data } = await axios.get('/api/status')
       state.status = data
     } catch (err) {
       console.error('Failed to fetch status:', err)
+    }
+  }
+
+  const fetchPorts = async () => {
+    try {
+      const { data } = await axios.get('/api/ports')
+      state.ports = data || []
+    } catch (err) {
+      console.error('Failed to fetch ports:', err)
+    }
+  }
+
+  const fetchVulnerabilities = async () => {
+    try {
+      const { data } = await axios.get('/api/vulns')
+      state.vulnerabilities = data || []
+    } catch (err) {
+      console.error('Failed to fetch vulnerabilities:', err)
+    }
+  }
+
+  const fetchRecommendations = async () => {
+    try {
+      const { data } = await axios.get('/api/recommendations')
+      state.recommendations = data || []
+    } catch (err) {
+      console.error('Failed to fetch recommendations:', err)
     }
   }
 
@@ -135,7 +175,11 @@ export function useStore() {
     disconnectWebSocket,
     fetchEvents,
     fetchBans,
+    fetchAttackers,
     fetchStatus,
+    fetchPorts,
+    fetchVulnerabilities,
+    fetchRecommendations,
     banIP,
     unbanIP
   }

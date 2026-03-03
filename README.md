@@ -33,7 +33,14 @@ Access dashboard at `http://127.0.0.1:8080`
 
 - `GET /api/events` — Recent security events (JSON)
 - `GET /api/health` — Health check
-- `GET /` — Dashboard UI (placeholder)
+- `GET /api/status` — Runtime status (log source, db size, uptime)
+- `GET /api/attackers` — Top attackers aggregation
+- `GET /api/bans` — Active bans
+- `GET /api/ports` — Open local ports exposure report
+- `GET /api/vulns` — Network vulnerability findings
+- `GET /api/recommendations` — Hardening recommendations
+- `GET /ws/events` — Live attack feed (WebSocket)
+- `GET /` — Dashboard UI
 
 ## Architecture
 

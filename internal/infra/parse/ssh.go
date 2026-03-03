@@ -20,6 +20,8 @@ var (
 	failedPasswordRe = regexp.MustCompile(`Failed password for (?:invalid user )?(\S+) from ([0-9a-f:.]+) port (\d+)`)
 	invalidUserRe    = regexp.MustCompile(`Invalid user (\S+) from ([0-9a-f:.]+)`)
 	acceptedRe       = regexp.MustCompile(`Accepted (?:password|publickey) for (\S+) from ([0-9a-f:.]+) port (\d+)`)
+	kexRe            = regexp.MustCompile(`kex_exchange_identification.*?([0-9a-f:.]+)?`)
+	disconnectRe     = regexp.MustCompile(`(?:Disconnected|Connection reset|Connection closed).*?([0-9a-f:.]+)`)
 )
 
 // ParseSSHLine parsea una línea del auth.log de SSH
@@ -60,6 +62,29 @@ func ParseSSHLine(line string) *SSHEvent {
 				IP:        matches[2],
 				Port:      port,
 			}
+		}
+	}
+
+	// Check kex/handshake anomalies.
+	if matches := kexRe.FindStringSubmatch(line); len(matches) > 0 {
+		ip := ""
+		if len(matches) > 1 {
+			ip = matches[1]
+		}
+		return &SSHEvent{
+			EventType: "kex_error",
+			IP:        ip,
+		}
+	}
+
+	if matches := disconnectRe.FindStringSubmatch(line); len(matches) > 0 {
+		ip := ""
+		if len(matches) > 1 {
+			ip = matches[1]
+		}
+		return &SSHEvent{
+			EventType: "disconnect",
+			IP:        ip,
 		}
 	}
 

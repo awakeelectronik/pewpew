@@ -91,6 +91,7 @@ const unbanIP = async (ip) => {
 
 onMounted(() => {
   store.fetchBans()
+  store.fetchAttackers()
 })
 </script>
 

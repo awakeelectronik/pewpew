@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"pewpew/internal/infra/geoip"
@@ -15,15 +16,23 @@ import (
 
 type App struct {
 	db      store.Store
-	tailer  *tail.SSHTailer
+	tailer  tailer
 	geoip   geoip.Resolver
 	server  *http.Server
 	stopCh  chan struct{}
 }
 
+type tailer interface {
+	Start(ctx context.Context) error
+	Stop()
+}
+
 func New() (*App, error) {
 	// 1. Init DB (SQLite)
 	dbPath := filepath.Join(os.ExpandEnv("$HOME"), ".pewpew", "pewpew.db")
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, err
+	}
 	db, err := store.NewSQLiteStore(dbPath)
 	if err != nil {
 		return nil, err
@@ -41,16 +50,23 @@ func New() (*App, error) {
 		geoipResolver = geoip.NewPlaceholderResolver()
 	}
 
-	// 4. Init tailer (SSH)
-	sshLogPath := detectSSHLogPath()
-	tailer := tail.NewSSHTailer(sshLogPath, db, geoipResolver, parse.ParseSSHLine)
+	// 4. Init tailer (archivo o journald)
+	var sshTailer tailer
+	sshLogPath, hasSSHLog := detectSSHLogPath()
+	if hasSSHLog {
+		sshTailer = tail.NewSSHTailer(sshLogPath, db, geoipResolver, parse.ParseSSHLine, http.BroadcastEvent)
+	} else if hasJournald() {
+		sshTailer = tail.NewSSHJournalTailer(db, geoipResolver, parse.ParseSSHLine, http.BroadcastEvent)
+	} else {
+		log.Println("SSH log not found and journald unavailable; SSH detection disabled")
+	}
 
 	// 5. Init HTTP server
-	httpServer := http.NewServer(":8080", db, geoipResolver)
+	httpServer := http.NewServer("127.0.0.1:9090", db, geoipResolver)
 
 	return &App{
 		db:     db,
-		tailer: tailer,
+		tailer: sshTailer,
 		geoip:  geoipResolver,
 		server: httpServer,
 		stopCh: make(chan struct{}),
@@ -60,16 +76,18 @@ func New() (*App, error) {
 func (a *App) Start(ctx context.Context) error {
 	log.Println("pewpew starting...")
 
-	// Start tailer
-	go func() {
-		if err := a.tailer.Start(ctx); err != nil {
-			log.Printf("tailer error: %v", err)
-		}
-	}()
+	// Start tailer (si hay log disponible)
+	if a.tailer != nil {
+		go func() {
+			if err := a.tailer.Start(ctx); err != nil {
+				log.Printf("tailer error: %v", err)
+			}
+		}()
+	}
 
 	// Start HTTP server
 	go func() {
-		log.Println("HTTP server listening on http://127.0.0.1:8080")
+		log.Println("HTTP server listening on http://127.0.0.1:9090")
 		if err := a.server.ListenAndServe(); err != nil {
 			log.Printf("server error: %v", err)
 		}
@@ -81,13 +99,16 @@ func (a *App) Start(ctx context.Context) error {
 func (a *App) Stop() {
 	log.Println("stopping app...")
 	close(a.stopCh)
-	a.tailer.Stop()
+	if a.tailer != nil {
+		a.tailer.Stop()
+	}
 	a.server.Close()
 	a.db.Close()
 }
 
-// detectSSHLogPath autodetecta la ruta del log SSH según distro
-func detectSSHLogPath() string {
+// detectSSHLogPath autodetecta la ruta del log SSH según distro.
+// Devuelve (path, true) si existe; ("", false) si no hay ningún log disponible.
+func detectSSHLogPath() (string, bool) {
 	candidates := []string{
 		"/var/log/auth.log",     // Debian/Ubuntu
 		"/var/log/secure",       // RHEL/CentOS/Fedora
@@ -97,10 +118,18 @@ func detectSSHLogPath() string {
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {
 			log.Printf("detected SSH log: %s", path)
-			return path
+			return path, true
 		}
 	}
 
-	log.Println("warning: SSH log not found, using default /var/log/auth.log")
-	return "/var/log/auth.log"
+	return "", false
 }
+
+func hasJournald() bool {
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		return false
+	}
+	cmd := exec.Command("journalctl", "--version")
+	return cmd.Run() == nil
+}
+

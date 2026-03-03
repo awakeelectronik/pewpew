@@ -56,7 +56,7 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Println(`
+	fmt.Print(`
 pewpew — security dashboard for VPS
 
 Usage:
