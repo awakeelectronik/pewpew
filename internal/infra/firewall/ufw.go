@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -75,10 +76,20 @@ func (u *UFWBackend) IsBanned(ip string) (bool, error) {
 	return strings.Contains(string(output), "deny "+ip), nil
 }
 
-// IsAvailable verifica si UFW está disponible
+// ufwPath devuelve el ejecutable de ufw (PATH o /usr/sbin/ufw). Vacío si no existe.
+func ufwPath() string {
+	if path, err := exec.LookPath("ufw"); err == nil {
+		return path
+	}
+	if _, err := os.Stat("/usr/sbin/ufw"); err == nil {
+		return "/usr/sbin/ufw"
+	}
+	return ""
+}
+
+// IsAvailable verifica si UFW está disponible (incluye /usr/sbin cuando PATH no lo tiene, p. ej. systemd)
 func (u *UFWBackend) IsAvailable() bool {
-	cmd := exec.Command("which", "ufw")
-	return cmd.Run() == nil
+	return ufwPath() != ""
 }
 
 // PortProtoKey devuelve la clave "port/proto" para comparar con reglas (p. ej. "5000/tcp").
@@ -90,47 +101,60 @@ func PortProtoKey(port int, proto string) string {
 	return strconv.Itoa(port) + "/" + p
 }
 
-var ufwRuleLineRe = regexp.MustCompile(`^\s*(\d+)/(tcp|udp)\s+(ALLOW|DENY|REJECT|LIMIT)\s+`)
+// NUM/tcp o NUM/udp + action (ej. "22/tcp ALLOW", "443/tcp DENY")
+var ufwRuleLineRe = regexp.MustCompile(`(\d+)/(tcp|udp).*?(allow|deny|reject|limit)`)
+// Puerto solo + action (ej. "5000    DENY", "3005 (v6) DENY") — UFW sin /tcp en la regla
+var ufwRulePortOnlyRe = regexp.MustCompile(`(?i)^\s*(\d+)\s+(?:\(v6\)\s+)?(allow|deny|reject|limit)\s+`)
 
-// PortRules obtiene las reglas de puertos de UFW (qué está ALLOW o DENY desde Anywhere).
-// Útil para no marcar como "expuesto" un puerto que UFW bloquea.
+// PortRules obtiene las reglas de puertos de UFW (qué está ALLOW o DENY).
 func (u *UFWBackend) PortRules() (allowed map[string]bool, denied map[string]bool, err error) {
 	allowed = make(map[string]bool)
 	denied = make(map[string]bool)
 
-	cmd := exec.Command("ufw", "status")
+	path := ufwPath()
+	if path == "" {
+		return nil, nil, fmt.Errorf("ufw not found")
+	}
+	cmd := exec.Command(path, "status")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, nil, err
 	}
 
 	lines := strings.Split(string(output), "\n")
-	inTable := false
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "To ") && strings.Contains(trimmed, "Action") {
-			inTable = true
+		lineLower := strings.ToLower(line)
+		// Primero: formato "5000/tcp DENY"
+		matches := ufwRuleLineRe.FindStringSubmatch(lineLower)
+		if len(matches) == 4 {
+			portStr, proto, action := matches[1], matches[2], matches[3]
+			port, _ := strconv.Atoi(portStr)
+			if port != 0 {
+				key := PortProtoKey(port, proto)
+				switch action {
+				case "allow", "limit":
+					allowed[key] = true
+				case "deny", "reject":
+					denied[key] = true
+				}
+			}
 			continue
 		}
-		if !inTable {
-			continue
-		}
-		// Línea de regla: "22/tcp    ALLOW    Anywhere" o "5000/tcp  DENY  Anywhere"
-		matches := ufwRuleLineRe.FindStringSubmatch(line)
-		if len(matches) != 4 {
-			continue
-		}
-		portStr, proto, action := matches[1], strings.ToLower(matches[2]), matches[3]
-		port, _ := strconv.Atoi(portStr)
-		if port == 0 {
-			continue
-		}
-		key := PortProtoKey(port, proto)
-		switch action {
-		case "ALLOW", "LIMIT":
-			allowed[key] = true
-		case "DENY", "REJECT":
-			denied[key] = true
+		// Segundo: formato "5000    DENY" (puerto sin /tcp ni /udp) — aplicar a tcp y udp
+		matchesPortOnly := ufwRulePortOnlyRe.FindStringSubmatch(line)
+		if len(matchesPortOnly) == 3 {
+			portStr, action := matchesPortOnly[1], strings.ToLower(matchesPortOnly[2])
+			port, _ := strconv.Atoi(portStr)
+			if port != 0 {
+				switch action {
+				case "allow", "limit":
+					allowed[PortProtoKey(port, "tcp")] = true
+					allowed[PortProtoKey(port, "udp")] = true
+				case "deny", "reject":
+					denied[PortProtoKey(port, "tcp")] = true
+					denied[PortProtoKey(port, "udp")] = true
+				}
+			}
 		}
 	}
 	return allowed, denied, nil
