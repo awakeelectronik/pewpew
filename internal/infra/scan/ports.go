@@ -8,15 +8,19 @@ import (
 	"strings"
 
 	"pewpew/internal/domain"
+	"pewpew/internal/infra/firewall"
 )
 
 // DetectOpenPorts obtiene puertos en escucha usando ss.
+// Los puertos que UFW tiene en DENY/REJECT no se consideran expuestos (risk low, "Blocked by UFW").
 func DetectOpenPorts() ([]*domain.OpenPort, error) {
 	cmd := exec.Command("ss", "-lntupH")
 	out, err := cmd.Output()
 	if err != nil {
 		return []*domain.OpenPort{}, err
 	}
+
+	ufwDenied := ufwDeniedPorts() // una sola consulta a ufw status
 
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	ports := make([]*domain.OpenPort, 0, 32)
@@ -39,7 +43,14 @@ func DetectOpenPorts() ([]*domain.OpenPort, error) {
 			continue
 		}
 		externally := isExternalBind(address)
+		blockedByUFW := ufwDenied[firewall.PortProtoKey(port, proto)]
+		if externally && blockedByUFW {
+			externally = false
+		}
 		risk, reason := classifyPortRisk(port, externally)
+		if blockedByUFW && isExternalBind(address) {
+			reason = "Blocked by UFW"
+		}
 		ports = append(ports, &domain.OpenPort{
 			Proto:      proto,
 			Address:    address,
@@ -53,6 +64,19 @@ func DetectOpenPorts() ([]*domain.OpenPort, error) {
 	}
 
 	return ports, scanner.Err()
+}
+
+// ufwDeniedPorts devuelve el conjunto de claves "port/proto" que UFW tiene en DENY/REJECT.
+func ufwDeniedPorts() map[string]bool {
+	u := firewall.NewUFWBackend()
+	if !u.IsAvailable() {
+		return nil
+	}
+	_, denied, err := u.PortRules()
+	if err != nil {
+		return nil
+	}
+	return denied
 }
 
 func parseAddrPort(input string) (string, int) {
