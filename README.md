@@ -1,29 +1,48 @@
+<div align="center">
+
 # 🔫 PewPew
 
-> Security dashboard para VPS: zero-config, un solo binario, ultra liviano. Mapa de ataques en tiempo real, top atacantes y ban IP con un clic.
+**Real-time SSH attack dashboard for your VPS.**
+
+_One binary. Zero config. Live map. One-click IP ban._
+
+[![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](https://golang.org)
+[![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)](https://vuejs.org)
+[![SQLite](https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white)](https://sqlite.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![RAM](https://img.shields.io/badge/RAM-~10MB-success)](#ram-usage)
+
+![PewPew Dashboard](https://pewpew.hipocondria.co)
+
+</div>
 
 ---
 
-## Qué hace PewPew
+## What is PewPew?
 
-- **Un solo binario**: Backend Go + frontend Vue embebido (`embed.FS`). Sin Node ni dependencias en producción.
-- **Zero-config**: Autodetección del log SSH (`/var/log/auth.log`, `/var/log/secure`, `/var/log/authlog`) y fallback a journald si no hay archivo.
-- **Tail en tiempo real**: Lee el auth log en streaming (sin cargar el archivo entero). Detecta rotación (logrotate) y reabre el archivo para no perder líneas.
-- **Parsing SSH**: Detecta `Failed password`, `Invalid user`, `Accepted password`/`publickey`, errores de handshake (kex) y desconexiones; extrae IP, usuario y puerto.
-- **GeoIP**: Resolver con caché (actualmente placeholder; preparado para MaxMind GeoLite2 offline).
-- **SQLite local**: Eventos, bans y hallazgos. Retención configurada: eventos más antiguos de 30 días se purgan automáticamente cada hora.
-- **API REST**: Eventos, estado, top atacantes, bans, puertos abiertos, hallazgos de vulnerabilidad y recomendaciones de hardening.
-- **WebSocket**: Feed en vivo de eventos (`/ws/events`) para el mapa y el feed de la UI.
-- **Dashboard Vue 3**: Modo oscuro; pantallas: Mapa live, Feed, Top Attackers, Bans, Status, Puertos, Vulnerabilidades, Recomendaciones.
-- **Ban / Unban IP**: Integración con UFW; validación de IP; cada acción se registra en la base de datos (auditoría).
-- **Seguridad por defecto**: Servidor escucha solo en `127.0.0.1:9090`. Acceso desde internet vía Nginx (o similar) como reverse proxy.
-- **Cierre ordenado**: Al parar, el servidor HTTP hace `Shutdown` para no dejar conexiones colgadas.
+Every VPS on the internet receives **thousands of SSH brute-force attempts per day**. PewPew turns your `/var/log/auth.log` into a live security dashboard — so you can see who's hitting you, where they're from, and ban them with a single click.
 
-**CLI:** `pewpew`, `pewpew start`, `pewpew version`, `pewpew help`.
+> ⚡ Go backend + Vue 3 frontend compiled into **a single 10MB binary**. Drop it on your server and it just works.
 
 ---
 
-## Quick Start
+## ✨ Features
+
+- **🗺️ Live Attack Map** — canvas-based world map, attacks animate in real time via WebSocket
+- **📡 Event Feed** — filterable stream of SSH events (failed passwords, invalid users, accepted logins)
+- **🏆 Top Attackers** — leaderboard with country, attempt count and ban/unban button
+- **🔨 One-Click Ban** — integrates with UFW (`ufw deny from <ip>`), logged with full audit trail
+- **🔒 Open Ports Scanner** — lists your exposed ports with risk level and reason
+- **🛡️ Vuln Findings** — flags sensitive services exposed to the internet
+- **💡 Hardening Recommendations** — actionable advice based on your actual server state
+- **📊 System Status** — hostname, firewall backend, DB size, event count, uptime
+- **🪶 Ultra lightweight** — ~10 MB RAM, SQLite with 30-day auto-purge, no external dependencies in production
+- **🔁 Log rotation aware** — detects logrotate and reopens the file without missing lines
+- **📦 Single binary deploy** — Vue build embedded via `embed.FS`, zero Node in production
+
+---
+
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/awakeelectronik/pewpew.git
@@ -32,73 +51,29 @@ make build
 ./bin/pewpew start
 ```
 
-Abre **http://127.0.0.1:9090** en el navegador.
+Open **http://127.0.0.1:9090** → done.
 
-**Requisitos:** Lectura de `/var/log/auth.log` (o equivalente). Para Ban IP: UFW instalado y permisos para ejecutar `ufw deny/delete`.
-
-**Por qué 9090:** Evita conflicto con el puerto 8080 (proxies/desarrollo). 9090 es habitual en dashboards y métricas.
-
-**Tail y rotación:** Si logrotate renombra el archivo de log, PewPew detecta el cambio y reabre el archivo para seguir leyendo sin perder líneas.
-
----
-
-## API
-
-| Método / Ruta | Descripción |
-|----------------|-------------|
-| `GET /api/events` | Últimos eventos (query `?limit=N`) |
-| `GET /api/health` | Health check |
-| `GET /api/status` | Estado: hostname, log path, firewall, DB size, eventos, bans, versión, uptime |
-| `GET /api/attackers` | Top atacantes (IP, intentos, país, último evento, banned) |
-| `GET /api/bans` | Lista de bans activos |
-| `POST /api/bans` | Crear ban (body: `{"ip":"1.2.3.4","reason":"..."}`) |
-| `DELETE /api/bans/<ip>` | Quitar ban |
-| `GET /api/ports` | Puertos abiertos (exposición local) |
-| `GET /api/vulns` | Hallazgos de vulnerabilidad de red |
-| `GET /api/recommendations` | Recomendaciones de hardening |
-| `GET /ws/events` | WebSocket: stream de eventos en vivo |
-| `GET /` | UI del dashboard (SPA Vue) |
+**Requirements:**
+- Linux VPS (Debian/Ubuntu/RHEL/Arch)
+- Read access to `/var/log/auth.log` (or `/var/log/secure`, `/var/log/authlog`)
+- `ufw` installed for IP banning (optional)
+- `gcc` (for SQLite CGO compilation)
 
 ---
 
-## Arquitectura
+## 🌐 Expose via Nginx (recommended)
 
-```
-pewpew/
-├── cmd/pewpew/           # main, CLI (start, version, help)
-├── internal/
-│   ├── app/             # Wiring: DB, tailer, GeoIP, HTTP
-│   ├── domain/          # SecurityEvent, BanAction, AttackerStat, etc.
-│   ├── usecase/         # recommendations
-│   ├── infra/
-│   │   ├── tail/        # SSHTailer (archivo + rotación), SSHJournalTailer
-│   │   ├── parse/       # Parser SSH (regex)
-│   │   ├── geoip/       # Resolver + caché
-│   │   ├── store/       # SQLite (events, bans, findings)
-│   │   ├── firewall/    # UFW backend
-│   │   └── scan/        # Puertos, vulnerabilidades
-│   └── transport/http/  # Handlers REST, WebSocket, servir UI embebida
-├── static/              # embed.FS de web/dist
-└── web/                 # Vue 3 + Vite (build → static/dist)
-```
-
----
-
-## Despliegue
-
-### Solo local
-
-```bash
-./bin/pewpew start
-```
-
-### Detrás de Nginx (recomendado para acceso externo)
+PewPew binds to `127.0.0.1:9090` by default. To access it from the internet, proxy it through Nginx with HTTPS:
 
 ```nginx
 server {
-    server_name pewpew.tudominio.com;
+    server_name pewpew.yourdomain.com;
     listen 443 ssl;
-    # ... certificados ...
+    # ... your certs ...
+
+    # Protect with Basic Auth (highly recommended)
+    auth_basic "PewPew";
+    auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {
         proxy_pass http://127.0.0.1:9090;
@@ -107,87 +82,144 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Sec-WebSocket-Key $http_sec_websocket_key;
-        proxy_set_header Sec-WebSocket-Version $http_sec_websocket_version;
     }
 }
 ```
 
-### Systemd (cuando exista unit)
+> ⚠️ **Always protect with auth** if you expose the dashboard publicly. The panel can ban IPs — you don't want that open.
 
-```bash
-sudo systemctl enable --now pewpew
+---
+
+## 📡 API Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/events` | Recent events (`?limit=N`) |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/status` | System status (hostname, firewall, DB size, uptime) |
+| `GET` | `/api/attackers` | Top attackers (IP, attempts, country, banned) |
+| `GET` | `/api/bans` | Active bans list |
+| `POST` | `/api/bans` | Create ban `{"ip":"1.2.3.4","reason":"..."}` |
+| `DELETE` | `/api/bans/<ip>` | Remove ban |
+| `GET` | `/api/ports` | Open ports with risk assessment |
+| `GET` | `/api/vulns` | Network vulnerability findings |
+| `GET` | `/api/recommendations` | Hardening recommendations |
+| `GET` | `/ws/events` | WebSocket live event stream |
+
+---
+
+## 🏗️ Architecture
+
+```
+pewpew/
+├── cmd/pewpew/           # CLI entrypoint (start, version, help)
+├── internal/
+│   ├── app/             # Wiring: DB → tailer → geoip → HTTP
+│   ├── domain/          # SecurityEvent, BanAction, AttackerStat
+│   ├── usecase/         # Hardening recommendations engine
+│   └── infra/
+│       ├── tail/        # SSHTailer — streaming, rotation-aware
+│       ├── parse/       # SSH log parser (regex)
+│       ├── geoip/       # GeoIP resolver + LRU cache
+│       ├── store/       # SQLite repository
+│       ├── firewall/    # UFW backend
+│       └── scan/        # Port scanner + vuln engine
+├── internal/transport/http/   # REST handlers + WebSocket broadcaster
+├── static/              # embed.FS: compiled Vue SPA
+└── web/                 # Vue 3 + Vite source
 ```
 
-*(Falta aún: unit y script de instalación; ver Roadmap.)*
+**Design principles:** Clean Architecture layers, repository pattern for data access, broadcaster pattern for WebSocket fan-out.
 
 ---
 
-## Uso de RAM
+## 📊 RAM Usage
 
-- Proceso: ~5–10 MB.
-- SQLite con retención de 30 días (purga automática): típicamente <50 MB para ~100k eventos/día.
-- **Objetivo: <100 MB** en VPS pequeños (2 GB RAM).
+| Component | Typical usage |
+|-----------|---------------|
+| Go process | ~5–10 MB |
+| SQLite (30d retention, ~100k events/day) | < 50 MB |
+| **Total target** | **< 100 MB** |
 
----
-
-## Roadmap
-
-### Próximamente (cerrar MVP y distribución)
-
-- [ ] **Script de instalación** (`install.sh`): descarga del release, chmod, usuario, systemd unit, arranque.
-- [ ] **Unit systemd** para `pewpew.service`.
-- [ ] **Releases** en GitHub: binarios linux-amd64 y linux-arm64 + checksums.
-- [ ] **Config** opcional: `pewpew.yml` o flags para puerto, ruta del log, días de retención.
-- [ ] **Autenticación** en el panel: login simple (usuario/contraseña en SQLite) + cookie/JWT.
-- [ ] **GeoIP real**: integración con MaxMind GeoLite2 (país/ciudad/lat/lon).
-- [ ] **README**: screenshot del dashboard y GIF del mapa en vivo.
-- [ ] **Endpoint `/debug`** (opcional): backlog, eventos/s, tamaño DB.
-
-### Fase 2 (Docker y Nginx)
-
-- [ ] **Docker-aware**: detectar `/var/run/docker.sock`, listar contenedores y permitir “monitorear logs del contenedor X”.
-- [ ] Regla de detección: MySQL “Access denied” en logs de contenedores.
-- [ ] **Detección de escaneos Nginx**: rutas típicas (/.env, /wp-login.php, /phpmyadmin) con muestreo/agregación para no saturar.
-
-### Fase 3 (Pro)
-
-- [ ] **Auto-ban** tipo fail2ban: reglas configurables (umbral de intentos, ventana, acción).
-- [ ] **Notificaciones**: Discord, Slack y/o Telegram.
-- [ ] **FIM** (integridad de archivos) opcional.
-- [ ] **Multi-nodo**: agente liviano que envía eventos a un central.
+Designed to run comfortably on the smallest VPS plans (1–2 GB RAM).
 
 ---
 
-## Desarrollo
+## 🛣️ Roadmap
+
+### MVP & Distribution
+- [ ] `install.sh` — one-liner install: download release, systemd unit, auto-start
+- [ ] `pewpew.service` systemd unit
+- [ ] GitHub Releases: `linux-amd64` and `linux-arm64` binaries + checksums
+- [ ] Optional config: `pewpew.yml` / CLI flags for port, log path, retention days
+- [ ] **Auth** — simple login (user/password in SQLite) + JWT cookie
+- [ ] **GeoIP real** — MaxMind GeoLite2 offline database (country/city/lat/lon)
+- [ ] Dashboard screenshot + live map GIF in README
+
+### Phase 2 — Extended Visibility
+- [ ] **Docker-aware** — mount `/var/run/docker.sock`, monitor container logs
+- [ ] MySQL brute-force detection from Docker container logs
+- [ ] **Nginx scan detection** — flag probes for `/.env`, `/wp-login.php`, `/phpmyadmin`
+
+### Phase 3 — Pro
+- [ ] **Auto-ban** rules (like fail2ban, but built-in): threshold + window + action
+- [ ] **Notifications** — Discord / Slack / Telegram
+- [ ] **FIM** — optional file integrity monitoring
+- [ ] **Multi-node** — lightweight agent → central collector
+
+---
+
+## 🔧 Development
 
 ```bash
-# Build completo (Vue + Go con UI embebida)
+# Full build (Vue → Go with embedded UI)
 make build
 
-# Solo frontend (dev server Vue)
+# Frontend dev server (hot reload)
 make dev-frontend
 
-# Solo backend (sin UI embebida; sirve API)
+# Backend only (API, no embedded UI)
 make dev-backend
 
 # Tests
 make test
 
-# Limpiar
+# Clean
 make clean
 ```
 
 ---
 
-## Seguridad
+## 🔐 Security Notes
 
-- **Bind local:** Por defecto PewPew solo escucha en `127.0.0.1`. Para exponerlo, usar reverse proxy (Nginx) con HTTPS y, si quieres, autenticación (Basic Auth en Nginx o login en PewPew cuando exista).
-- **Ban IP:** Se ejecuta `ufw deny from <ip>` / `ufw delete deny from <ip>`. Hace falta permisos suficientes (root o sudoers para esos comandos). Las IP se validan; no se concatena input a comandos sin sanitizar.
-- **Sin auth en el panel (hoy):** Si expones el puerto, cualquiera con acceso puede ver el dashboard y ejecutar ban. No exponer sin proxy y/o auth.
+- **Local bind by default** — PewPew listens only on `127.0.0.1:9090`. Expose via reverse proxy with HTTPS + auth.
+- **UFW ban** — runs `ufw deny from <ip>`. Requires root or sudoers permission. IPs are validated before use.
+- **No auth yet** — if you expose the port without a proxy, anyone can see the dashboard and ban IPs. Use Nginx Basic Auth until the built-in auth lands.
+- **Audit trail** — every ban/unban is recorded in SQLite with timestamp, IP, reason and actor.
 
 ---
 
-## Licencia
+## 🤝 Contributing
 
-MIT. Ver [LICENSE](LICENSE).
+Pull requests are welcome! Check the [Roadmap](#️-roadmap) for what's next.
+
+1. Fork the repo
+2. Create a branch: `git checkout -b feat/your-feature`
+3. Commit your changes
+4. Push and open a PR
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+Made with ☕ and paranoia about VPS security.
+
+**[⭐ Star this repo](https://github.com/awakeelectronik/pewpew)** if PewPew helps you keep your server safe.
+
+</div>
