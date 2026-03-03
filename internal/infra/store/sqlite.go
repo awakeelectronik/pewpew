@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"net"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ type Store interface {
 	GetActiveBans() ([]*domain.BanAction, error)
 	GetRecentFindingCount(hours int) int64
 	DeactivateBan(ip string) error
+	DeleteEventsOlderThan(d time.Duration) (int64, error)
 	Close() error
 }
 
@@ -207,6 +209,10 @@ func (s *SQLiteStore) GetTopAttackers(limit int) ([]*domain.AttackerStat, error)
 		if err := rows.Scan(&a.IP, &a.Count, &lastSeenRaw, &a.Country, &a.City, &a.LastType, &banned); err != nil {
 			return nil, err
 		}
+		// Excluir IPs inválidas (ej. caracteres sueltos "b", "f" por parseo erróneo)
+		if a.IP == "" || net.ParseIP(a.IP) == nil {
+			continue
+		}
 		a.LastSeen = parseSQLiteTime(lastSeenRaw)
 		a.Banned = banned != 0
 		out = append(out, a)
@@ -290,6 +296,19 @@ func (s *SQLiteStore) DeactivateBan(ip string) error {
 
 	_, err := s.db.Exec("UPDATE bans SET active = 0 WHERE ip = ?", ip)
 	return err
+}
+
+// DeleteEventsOlderThan borra eventos con timestamp anterior a (now - d). Retorna el número de filas borradas.
+func (s *SQLiteStore) DeleteEventsOlderThan(d time.Duration) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := time.Now().Add(-d)
+	res, err := s.db.Exec("DELETE FROM events WHERE timestamp < ?", cutoff.Format("2006-01-02 15:04:05"))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // Close cierra la conexión

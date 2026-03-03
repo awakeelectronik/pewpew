@@ -3,22 +3,24 @@ package app
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"pewpew/internal/infra/geoip"
 	"pewpew/internal/infra/parse"
 	"pewpew/internal/infra/store"
 	"pewpew/internal/infra/tail"
-	"pewpew/internal/transport/http"
+	httptransport "pewpew/internal/transport/http"
 )
 
 type App struct {
 	db      store.Store
 	tailer  tailer
 	geoip   geoip.Resolver
-	server  *http.Server
+	server  *httptransport.Server
 	stopCh  chan struct{}
 }
 
@@ -54,15 +56,15 @@ func New() (*App, error) {
 	var sshTailer tailer
 	sshLogPath, hasSSHLog := detectSSHLogPath()
 	if hasSSHLog {
-		sshTailer = tail.NewSSHTailer(sshLogPath, db, geoipResolver, parse.ParseSSHLine, http.BroadcastEvent)
+		sshTailer = tail.NewSSHTailer(sshLogPath, db, geoipResolver, parse.ParseSSHLine, httptransport.BroadcastEvent)
 	} else if hasJournald() {
-		sshTailer = tail.NewSSHJournalTailer(db, geoipResolver, parse.ParseSSHLine, http.BroadcastEvent)
+		sshTailer = tail.NewSSHJournalTailer(db, geoipResolver, parse.ParseSSHLine, httptransport.BroadcastEvent)
 	} else {
 		log.Println("SSH log not found and journald unavailable; SSH detection disabled")
 	}
 
 	// 5. Init HTTP server
-	httpServer := http.NewServer("127.0.0.1:9090", db, geoipResolver)
+	httpServer := httptransport.NewServer("127.0.0.1:9090", db, geoipResolver)
 
 	return &App{
 		db:     db,
@@ -76,7 +78,6 @@ func New() (*App, error) {
 func (a *App) Start(ctx context.Context) error {
 	log.Println("pewpew starting...")
 
-	// Start tailer (si hay log disponible)
 	if a.tailer != nil {
 		go func() {
 			if err := a.tailer.Start(ctx); err != nil {
@@ -85,10 +86,29 @@ func (a *App) Start(ctx context.Context) error {
 		}()
 	}
 
-	// Start HTTP server
+	// Retención: purgar eventos más antiguos que 30 días (cada hora)
+	const retentionDays = 30
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.stopCh:
+				return
+			case <-ticker.C:
+				n, err := a.db.DeleteEventsOlderThan(retentionDays * 24 * time.Hour)
+				if err != nil {
+					log.Printf("retention purge error: %v", err)
+				} else if n > 0 {
+					log.Printf("retention: deleted %d events older than %d days", n, retentionDays)
+				}
+			}
+		}
+	}()
+
 	go func() {
 		log.Println("HTTP server listening on http://127.0.0.1:9090")
-		if err := a.server.ListenAndServe(); err != nil {
+		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("server error: %v", err)
 		}
 	}()

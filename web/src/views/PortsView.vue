@@ -2,7 +2,7 @@
   <div class="panel">
     <div class="head">
       <h2>Open Ports</h2>
-      <button class="btn" @click="store.fetchPorts()">Refresh</button>
+      <button class="btn" :disabled="portsLoading" @click="onRefresh">Refresh</button>
     </div>
     <table class="tbl">
       <thead>
@@ -25,9 +25,18 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useStore } from '../stores/store.js'
 const store = useStore()
+const portsLoading = ref(false)
+const onRefresh = async () => {
+  portsLoading.value = true
+  try {
+    await store.fetchPorts()
+  } finally {
+    portsLoading.value = false
+  }
+}
 onMounted(() => store.fetchPorts())
 </script>
 
@@ -36,5 +45,6 @@ onMounted(() => store.fetchPorts())
 .head { display:flex; justify-content:space-between; margin-bottom:1rem; }
 .tbl { width:100%; font-size:.85rem; border-collapse: collapse; }
 .tbl th,.tbl td { border-bottom:1px solid #334155; padding:.5rem; text-align:left; }
-.btn { background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:4px; padding:.4rem .8rem; }
+.btn { background:#0f172a; color:#cbd5e1; border:1px solid #334155; border-radius:4px; padding:.4rem .8rem; cursor:pointer; }
+.btn:disabled { opacity:.6; cursor:not-allowed; }
 </style>

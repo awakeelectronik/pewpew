@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"log"
@@ -22,17 +23,20 @@ type Server struct {
 	addr      string
 	db        store.Store
 	geoip     geoip.Resolver
+	srv       *http.Server
 	mux       *http.ServeMux
 	startedAt time.Time
 }
 
 // NewServer crea servidor HTTP
 func NewServer(addr string, db store.Store, geoip geoip.Resolver) *Server {
+	mux := http.NewServeMux()
 	s := &Server{
 		addr:      addr,
 		db:        db,
 		geoip:     geoip,
-		mux:       http.NewServeMux(),
+		srv:       &http.Server{Addr: addr, Handler: mux},
+		mux:       mux,
 		startedAt: time.Now(),
 	}
 
@@ -188,12 +192,14 @@ func (s *Server) runtimeStatus() map[string]any {
 // ListenAndServe inicia el servidor
 func (s *Server) ListenAndServe() error {
 	log.Printf("starting HTTP server on %s", s.addr)
-	return http.ListenAndServe(s.addr, s.mux)
+	return s.srv.ListenAndServe()
 }
 
-// Close cierra el servidor
+// Close cierra el servidor de forma ordenada (Shutdown)
 func (s *Server) Close() error {
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.srv.Shutdown(ctx)
 }
 
 func detectSSHPathForStatus() string {

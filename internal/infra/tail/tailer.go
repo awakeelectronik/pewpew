@@ -86,13 +86,14 @@ func (t *SSHTailer) Stop() {
 	}
 }
 
-// readLoop lee líneas en streaming (eficiente en RAM)
+// readLoop lee líneas en streaming (eficiente en RAM). Detecta rotación del archivo
+// (p. ej. logrotate) y reabre el archivo para seguir leyendo sin perder líneas.
 func (t *SSHTailer) readLoop(ctx context.Context) {
 	defer t.wg.Done()
 
-	reader := bufio.NewReader(t.file)
-	checkTicker := time.NewTicker(1 * time.Second)
-	defer checkTicker.Stop()
+	const rotationCheckInterval = 2 * time.Second
+	rotationTicker := time.NewTicker(rotationCheckInterval)
+	defer rotationTicker.Stop()
 
 	for {
 		select {
@@ -100,56 +101,100 @@ func (t *SSHTailer) readLoop(ctx context.Context) {
 			return
 		case <-t.stopCh:
 			return
-		case <-checkTicker.C:
-			// Intentar leer línea
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				// EOF o error; esperar y reintentar (por rotación de logs)
-				if err == io.EOF {
-					continue
+		default:
+		}
+
+		// Reabrir si el archivo fue rotado (inode distinto)
+		if t.shouldReopen() {
+			t.reopenFile()
+		}
+
+		reader := bufio.NewReader(t.file)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				// Sin más datos; esperar un poco y revisar rotación
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.stopCh:
+					return
+				case <-rotationTicker.C:
 				}
 				continue
 			}
+			// Error de lectura (archivo cerrado/rotado): reabrir en la siguiente iteración
+			continue
+		}
 
-			if len(line) == 0 {
-				continue
+		if len(line) == 0 {
+			continue
+		}
+
+		sshEvent := t.parser(line)
+		if sshEvent == nil {
+			continue
+		}
+
+		geoData := t.geoip.Resolve(sshEvent.IP)
+		event := &domain.SecurityEvent{
+			Timestamp: time.Now(),
+			Source:    "ssh",
+			EventType: sshEvent.EventType,
+			IP:        sshEvent.IP,
+			Username:  sshEvent.Username,
+			Port:      sshEvent.Port,
+			Message:   line,
+			Country:   geoData.CountryCode,
+			City:      geoData.City,
+			Latitude:  geoData.Latitude,
+			Longitude: geoData.Longitude,
+		}
+
+		select {
+		case t.eventsCh <- event:
+			if t.onEvent != nil {
+				t.onEvent(event)
 			}
-
-			// Parse SSH event
-			sshEvent := t.parser(line)
-			if sshEvent == nil {
-				continue
-			}
-
-			// Enrich con GeoIP
-			geoData := t.geoip.Resolve(sshEvent.IP)
-
-			// Crear event
-			event := &domain.SecurityEvent{
-				Timestamp: time.Now(),
-				Source:    "ssh",
-				EventType: sshEvent.EventType,
-				IP:        sshEvent.IP,
-				Username:  sshEvent.Username,
-				Port:      sshEvent.Port,
-				Message:   line,
-				Country:   geoData.CountryCode,
-				City:      geoData.City,
-				Latitude:  geoData.Latitude,
-				Longitude: geoData.Longitude,
-			}
-
-			// Enviar a batch processor
-			select {
-			case t.eventsCh <- event:
-				if t.onEvent != nil {
-					t.onEvent(event)
-				}
-			case <-t.stopCh:
-				return
-			}
+		case <-t.stopCh:
+			return
 		}
 	}
+}
+
+// shouldReopen devuelve true si el archivo en disco (por path) es distinto al que tenemos abierto (rotación).
+func (t *SSHTailer) shouldReopen() bool {
+	if t.file == nil {
+		return true
+	}
+	ourStat, err := t.file.Stat()
+	if err != nil {
+		return true
+	}
+	pathStat, err := os.Stat(t.logPath)
+	if err != nil {
+		return false
+	}
+	return !os.SameFile(ourStat, pathStat)
+}
+
+// reopenFile cierra el archivo actual y abre de nuevo por path (seek al final para solo nuevas líneas).
+func (t *SSHTailer) reopenFile() {
+	if t.file != nil {
+		t.file.Close()
+		t.file = nil
+	}
+	file, err := os.Open(t.logPath)
+	if err != nil {
+		log.Printf("tailer reopen failed: %v", err)
+		return
+	}
+	if _, err := file.Seek(0, 2); err != nil {
+		file.Close()
+		return
+	}
+	t.file = file
+	log.Printf("tailer reopened %s (log rotation)", t.logPath)
 }
 
 // batchProcessor agrupa eventos y los guarda en lotes (reduce I/O)

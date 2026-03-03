@@ -98,7 +98,8 @@ export function useStore() {
   const fetchPorts = async () => {
     try {
       const { data } = await axios.get('/api/ports')
-      state.ports = data || []
+      const list = Array.isArray(data) ? data : []
+      state.ports.splice(0, state.ports.length, ...list)
     } catch (err) {
       console.error('Failed to fetch ports:', err)
     }

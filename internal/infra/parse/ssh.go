@@ -65,16 +65,20 @@ func ParseSSHLine(line string) *SSHEvent {
 		}
 	}
 
-	// Check kex/handshake anomalies.
+	// Check kex/handshake anomalies (solo contar si la IP capturada es válida)
 	if matches := kexRe.FindStringSubmatch(line); len(matches) > 0 {
 		ip := ""
 		if len(matches) > 1 {
 			ip = matches[1]
 		}
-		return &SSHEvent{
-			EventType: "kex_error",
-			IP:        ip,
+		if ip != "" && isValidIP(ip) {
+			return &SSHEvent{
+				EventType: "kex_error",
+				IP:        ip,
+			}
 		}
+		// IP vacía o inválida (ej. un solo carácter): no generar evento para Top Attackers
+		return nil
 	}
 
 	if matches := disconnectRe.FindStringSubmatch(line); len(matches) > 0 {
@@ -82,10 +86,13 @@ func ParseSSHLine(line string) *SSHEvent {
 		if len(matches) > 1 {
 			ip = matches[1]
 		}
-		return &SSHEvent{
-			EventType: "disconnect",
-			IP:        ip,
+		if ip != "" && isValidIP(ip) {
+			return &SSHEvent{
+				EventType: "disconnect",
+				IP:        ip,
+			}
 		}
+		return nil
 	}
 
 	return nil

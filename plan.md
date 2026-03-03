@@ -128,7 +128,7 @@ web/ # Vue app
 - Si es SPA (Vue router history), agregar fallback a `index.html` para rutas no encontradas.
 
 ### 4.3 Resultado
-- Producción: ejecutar `./pewpew` y acceder al dashboard en `http://127.0.0.1:8080`.
+- Producción: ejecutar `./pewpew` y acceder al dashboard en `http://127.0.0.1:9090`.
 - Para internet: Nginx reverse proxy (ver sección 6).
 
 ---
@@ -157,12 +157,12 @@ web/ # Vue app
 ## 6) Despliegue detrás de Nginx (cómo se accede “desde la web”)
 
 ### 6.1 Proceso recomendado
-- pewpew escucha solo local: `127.0.0.1:8080`.
+- pewpew escucha solo local: `127.0.0.1:9090`.
 - Nginx recibe HTTPS (443) y hace proxy a pewpew.
 
 ### 6.2 Config Nginx ejemplo
 - server_name: `pewpew.tudominio.com`
-- proxy_pass a `http://127.0.0.1:8080`
+- proxy_pass a `http://127.0.0.1:9090`
 - habilitar WebSocket si aplica (`/ws` o similar).
 
 ### 6.3 Seguridad
