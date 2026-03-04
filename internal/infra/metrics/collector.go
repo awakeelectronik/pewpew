@@ -104,12 +104,13 @@ func (c *Collector) Collect() (*Snapshot, error) {
 	loadStats, _ := readLoadAvg()
 
 	return &Snapshot{
-		CPU:    cpuStats,
-		Memory: memStats,
-		Swap:   swapStats,
-		Disk:   diskStats,
-		Net:    netStats,
-		Load:   loadStats,
+		CollectedAt: now.Unix(),
+		CPU:         cpuStats,
+		Memory:      memStats,
+		Swap:        swapStats,
+		Disk:        diskStats,
+		Net:         netStats,
+		Load:        loadStats,
 	}, nil
 }
 

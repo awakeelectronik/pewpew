@@ -129,10 +129,52 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 const metrics = ref(null)
 let timer = null
 
+// Normalize API response to the shape the template expects (backend uses different keys).
+function normalizeMetrics(raw) {
+  if (!raw) return null
+  const cpu = raw.cpu || {}
+  const mem = raw.memory || {}
+  const swap = raw.swap || {}
+  const load = raw.load || {}
+  const usagePercent = typeof cpu.idle_percent === 'number' ? 100 - cpu.idle_percent : 0
+  return {
+    collected_at: raw.collected_at,
+    cpu: {
+      usage_percent: usagePercent,
+      user_percent: cpu.us_percent ?? 0,
+      sys_percent: cpu.sy_percent ?? 0,
+      iowait_percent: cpu.wa_percent ?? 0,
+      steal_percent: cpu.st_percent ?? 0,
+    },
+    memory: {
+      usage_percent: mem.used_percent ?? 0,
+      used_mb: Math.round((mem.used_bytes ?? 0) / 1024 / 1024),
+      available_mb: Math.round((mem.available_bytes ?? 0) / 1024 / 1024),
+      total_mb: Math.round((mem.total_bytes ?? 0) / 1024 / 1024),
+      swap_total_mb: Math.round((swap.total_bytes ?? 0) / 1024 / 1024),
+      swap_used_mb: Math.round((swap.used_bytes ?? 0) / 1024 / 1024),
+    },
+    load: {
+      load1: load.load1 ?? 0,
+      load5: load.load5 ?? 0,
+      load15: load.load15 ?? 0,
+      procs_running: load.procs ?? 0,
+      procs_total: load.procs ?? 0,
+    },
+    network: raw.net ? [{
+      ...raw.net,
+      rx_drops: raw.net.rx_drops_total ?? 0,
+      tx_drops: raw.net.tx_drops_total ?? 0,
+    }] : [],
+    disk: raw.disk ? [{ ...raw.disk, io_util_percent: 0 }] : [],
+  }
+}
+
 const fetchMetrics = async () => {
   try {
     const res = await fetch('/api/metrics')
-    metrics.value = await res.json()
+    const raw = await res.json()
+    metrics.value = normalizeMetrics(raw)
   } catch (e) {
     console.error('metrics fetch failed', e)
   }
@@ -175,8 +217,10 @@ const loadColor = (val) => {
 }
 
 const collectedAt = computed(() => {
-  if (!metrics.value) return ''
-  return new Date(metrics.value.collected_at * 1000).toLocaleTimeString()
+  if (!metrics.value?.collected_at) return '—'
+  const t = metrics.value.collected_at * 1000
+  const d = new Date(t)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleTimeString()
 })
 
 onMounted(() => {

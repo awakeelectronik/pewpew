@@ -2,12 +2,13 @@ package metrics
 
 // Snapshot holds a point-in-time snapshot of VPS system metrics.
 type Snapshot struct {
-	CPU    CPUStats  `json:"cpu"`
-	Memory MemStats  `json:"memory"`
-	Swap   SwapStats `json:"swap"`
-	Disk   DiskStats `json:"disk"`
-	Net    NetStats  `json:"net"`
-	Load   LoadStats `json:"load"`
+	CollectedAt int64     `json:"collected_at"` // Unix seconds
+	CPU         CPUStats  `json:"cpu"`
+	Memory      MemStats  `json:"memory"`
+	Swap        SwapStats `json:"swap"`
+	Disk        DiskStats `json:"disk"`
+	Net         NetStats  `json:"net"`
+	Load        LoadStats `json:"load"`
 }
 
 // CPUStats represents CPU usage percentages derived from /proc/stat deltas.
