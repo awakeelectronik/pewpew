@@ -279,11 +279,11 @@ func (s *SQLiteStore) GetActiveBans() ([]*domain.BanAction, error) {
 	var bans []*domain.BanAction
 	for rows.Next() {
 		b := &domain.BanAction{}
-		var active int
+		var active bool
 		if err := rows.Scan(&b.ID, &b.IP, &b.Timestamp, &b.Backend, &b.Reason, &b.ExpiresAt, &b.CreatedBy, &active); err != nil {
 			return nil, err
 		}
-		b.Active = active != 0
+		b.Active = active
 		bans = append(bans, b)
 	}
 	return bans, rows.Err()

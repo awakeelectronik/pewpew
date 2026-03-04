@@ -67,13 +67,53 @@ func (u *UFWBackend) IsBanned(ip string) (bool, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	cmd := exec.Command("ufw", "status", "numbered")
+	path := ufwPath()
+	if path == "" {
+		return false, fmt.Errorf("ufw not found")
+	}
+	cmd := exec.Command(path, "status", "numbered")
 	output, err := cmd.Output()
 	if err != nil {
 		return false, err
 	}
 
 	return strings.Contains(string(output), "deny "+ip), nil
+}
+
+// BannedIPs devuelve la lista de IPs con regla DENY en UFW (deny from X o DENY ... X en la tabla).
+func (u *UFWBackend) BannedIPs() ([]string, error) {
+	path := ufwPath()
+	if path == "" {
+		log.Printf("[BannedIPs] ufw path empty, returning no IPs")
+		return nil, nil
+	}
+	log.Printf("[BannedIPs] running: %s status numbered", path)
+	cmd := exec.Command(path, "status", "numbered")
+	cmd.Env = append(os.Environ(), "LANG=C", "LC_ALL=C")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[BannedIPs] ERROR exec: %v | output: %s", err, string(output))
+		return nil, err
+	}
+	log.Printf("[BannedIPs] exec ok, output len=%d bytes", len(output))
+	var ips []string
+	seen := make(map[string]bool)
+	ipv4Re := regexp.MustCompile(`(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
+	for _, line := range strings.Split(string(output), "\n") {
+		lineLower := strings.ToLower(line)
+		if !strings.Contains(lineLower, "deny") {
+			continue
+		}
+		all := ipv4Re.FindAllString(line, -1)
+		for _, candidate := range all {
+			if net.ParseIP(candidate) != nil && !seen[candidate] {
+				seen[candidate] = true
+				ips = append(ips, candidate)
+			}
+		}
+	}
+	log.Printf("[BannedIPs] parsed IPs: %v", ips)
+	return ips, nil
 }
 
 // ufwPath devuelve el ejecutable de ufw (PATH o /usr/sbin/ufw). Vacío si no existe.

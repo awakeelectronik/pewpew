@@ -64,17 +64,53 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) bansHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		// Listar bans
+		log.Printf("[bans] GET /api/bans requested")
+		// Listar bans: DB + IPs que UFW tiene en DENY (p. ej. ufw deny from X por CLI)
 		bans, err := s.db.GetActiveBans()
 		if err != nil {
+			log.Printf("[bans] ERROR GetActiveBans: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		log.Printf("[bans] GetActiveBans ok, count=%d", len(bans))
 		if bans == nil {
 			bans = []*domain.BanAction{}
 		}
+		inDB := make(map[string]bool)
+		for _, b := range bans {
+			inDB[b.IP] = true
+		}
+		ufw := firewall.NewUFWBackend()
+		avail := ufw.IsAvailable()
+		log.Printf("[bans] ufw.IsAvailable()=%v", avail)
+		if avail {
+			ufwIPs, errUFW := ufw.BannedIPs()
+			if errUFW != nil {
+				log.Printf("[bans] ERROR UFW BannedIPs: %v", errUFW)
+			} else {
+				log.Printf("[bans] UFW BannedIPs ok, count=%d, ips=%v", len(ufwIPs), ufwIPs)
+			}
+			for _, ip := range ufwIPs {
+				if !inDB[ip] {
+					bans = append(bans, &domain.BanAction{
+						IP:        ip,
+						Timestamp: time.Now(),
+						Backend:   "ufw",
+						Reason:    "Blocked by UFW",
+						Active:    true,
+						CreatedBy:  "ufw",
+					})
+					inDB[ip] = true
+				}
+			}
+		} else {
+			log.Printf("[bans] ufw not available (path empty)")
+		}
+		log.Printf("[bans] returning total bans=%d", len(bans))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		json.NewEncoder(w).Encode(bans)
+		if errEncode := json.NewEncoder(w).Encode(bans); errEncode != nil {
+			log.Printf("[bans] ERROR encoding response: %v", errEncode)
+		}
 
 	case http.MethodPost:
 		// Crear ban
@@ -121,14 +157,19 @@ func (s *Server) bansHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// banDetailsHandler maneja DELETE de ban específico
+// banDetailsHandler maneja DELETE de ban específico. GET /api/bans/ (solo barra) → lista (por si el cliente pide con trailing slash).
 func (s *Server) banDetailsHandler(w http.ResponseWriter, r *http.Request) {
+	pathSuffix := strings.TrimPrefix(r.URL.Path, "/api/bans/")
+	if r.Method == http.MethodGet && (pathSuffix == "" || pathSuffix == "/") {
+		s.bansHandler(w, r)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	ip := strings.TrimPrefix(r.URL.Path, "/api/bans/")
+	ip := pathSuffix
 	if net.ParseIP(ip) == nil {
 		http.Error(w, "invalid IP", http.StatusBadRequest)
 		return
