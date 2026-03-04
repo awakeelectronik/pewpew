@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"pewpew/internal/infra/geoip"
+	"pewpew/internal/infra/metrics"
 	"pewpew/internal/infra/scan"
 	"pewpew/internal/infra/store"
 	"pewpew/internal/usecase/recommendations"
@@ -23,6 +24,7 @@ type Server struct {
 	addr      string
 	db        store.Store
 	geoip     geoip.Resolver
+	collector *metrics.Collector
 	srv       *http.Server
 	mux       *http.ServeMux
 	startedAt time.Time
@@ -35,6 +37,7 @@ func NewServer(addr string, db store.Store, geoip geoip.Resolver) *Server {
 		addr:      addr,
 		db:        db,
 		geoip:     geoip,
+		collector: metrics.NewCollector(),
 		srv:       &http.Server{Addr: addr, Handler: mux},
 		mux:       mux,
 		startedAt: time.Now(),
@@ -49,6 +52,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/events", s.getEventsHandler)
 	s.mux.HandleFunc("/api/health", s.healthHandler)
 	s.mux.HandleFunc("/api/status", s.statusHandler)
+	s.mux.HandleFunc("/api/metrics", s.metricsHandler)
 	s.mux.HandleFunc("/api/attackers", s.attackersHandler)
 	s.mux.HandleFunc("/api/bans", s.bansHandler)
 	s.mux.HandleFunc("/api/bans/", s.banDetailsHandler)
@@ -119,6 +123,21 @@ func (s *Server) recommendationsHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(recs)
 }
 
+// metricsHandler returns a real-time VPS health snapshot (CPU, RAM, disk, net, load).
+func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	snap, err := s.collector.Collect()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(snap)
+}
+
 // frontendFS es el subárbol "dist" del FS embebido para servir en "/".
 var frontendFS fs.FS
 
@@ -174,18 +193,18 @@ func (s *Server) runtimeStatus() map[string]any {
 		sshSource = "journald_or_unavailable"
 	}
 	return map[string]any{
-		"hostname":            getHostname(),
-		"ssh_log_path":        sshPath,
-		"ssh_log_source":      sshSource,
-		"firewall_backend":    detectFirewallBackend(),
-		"db_size":             s.db.GetDBSize(),
-		"total_events":        s.db.GetEventCount(),
-		"active_bans":         s.db.GetActiveBanCount(),
-		"recent_findings":     len(findings),
-		"open_ports":          len(ports),
-		"version":             "0.1.0-alpha",
-		"uptime_seconds":      int64(time.Since(s.startedAt).Seconds()),
-		"bind_addr":           s.addr,
+		"hostname":         getHostname(),
+		"ssh_log_path":     sshPath,
+		"ssh_log_source":   sshSource,
+		"firewall_backend": detectFirewallBackend(),
+		"db_size":          s.db.GetDBSize(),
+		"total_events":     s.db.GetEventCount(),
+		"active_bans":      s.db.GetActiveBanCount(),
+		"recent_findings":  len(findings),
+		"open_ports":       len(ports),
+		"version":          "0.1.0-alpha",
+		"uptime_seconds":   int64(time.Since(s.startedAt).Seconds()),
+		"bind_addr":        s.addr,
 	}
 }
 
@@ -211,4 +230,3 @@ func detectSSHPathForStatus() string {
 	}
 	return ""
 }
-

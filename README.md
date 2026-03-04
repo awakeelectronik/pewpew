@@ -2,17 +2,15 @@
 
 # 🔫 PewPew
 
-**Real-time SSH attack dashboard for your VPS.**
+**Real-time SSH attack dashboard + VPS health monitor for your server.**
 
-_One binary. Zero config. Live map. One-click IP ban._
+_One binary. Zero config. Live map. One-click IP ban. VPS metrics._
 
 [![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)](https://vuejs.org)
 [![SQLite](https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white)](https://sqlite.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![RAM](https://img.shields.io/badge/RAM-~10MB-success)](#ram-usage)
-
-![PewPew Dashboard](https://pewpew.hipocondria.co)
 
 </div>
 
@@ -22,7 +20,9 @@ _One binary. Zero config. Live map. One-click IP ban._
 
 Every VPS on the internet receives **thousands of SSH brute-force attempts per day**. PewPew turns your `/var/log/auth.log` into a live security dashboard — so you can see who's hitting you, where they're from, and ban them with a single click.
 
-> ⚡ Go backend + Vue 3 frontend compiled into **a single 10MB binary**. Drop it on your server and it just works.
+It also exposes real-time VPS health metrics (CPU, RAM, disk I/O, network throughput and drops, load average) directly from `/proc` — no agents, no external dependencies.
+
+> ⚡ Go backend + Vue 3 frontend compiled into **a single 10 MB binary**. Drop it on your server and it just works.
 
 ---
 
@@ -36,6 +36,7 @@ Every VPS on the internet receives **thousands of SSH brute-force attempts per d
 - **🛡️ Vuln Findings** — flags sensitive services exposed to the internet
 - **💡 Hardening Recommendations** — actionable advice based on your actual server state
 - **📊 System Status** — hostname, firewall backend, DB size, event count, uptime
+- **🖥️ VPS Health Metrics** — CPU %, RAM %, swap, disk I/O ops/s, network RX/TX bytes/s and drops, load average — all from `/proc`, zero deps
 - **🪶 Ultra lightweight** — ~10 MB RAM, SQLite with 30-day auto-purge, no external dependencies in production
 - **🔁 Log rotation aware** — detects logrotate and reopens the file without missing lines
 - **📦 Single binary deploy** — Vue build embedded via `embed.FS`, zero Node in production
@@ -97,6 +98,7 @@ server {
 | `GET` | `/api/events` | Recent events (`?limit=N`) |
 | `GET` | `/api/health` | Health check |
 | `GET` | `/api/status` | System status (hostname, firewall, DB size, uptime) |
+| `GET` | `/api/metrics` | **VPS health snapshot** (CPU, RAM, disk I/O, network, load) |
 | `GET` | `/api/attackers` | Top attackers (IP, attempts, country, banned) |
 | `GET` | `/api/bans` | Active bans list |
 | `POST` | `/api/bans` | Create ban `{"ip":"1.2.3.4","reason":"..."}` |
@@ -105,6 +107,33 @@ server {
 | `GET` | `/api/vulns` | Network vulnerability findings |
 | `GET` | `/api/recommendations` | Hardening recommendations |
 | `GET` | `/ws/events` | WebSocket live event stream |
+
+---
+
+## 🖥️ VPS Health Metrics
+
+`GET /api/metrics` returns a point-in-time snapshot computed from `/proc` files.
+All rate values (bytes/s, ops/s) are deltas against the previous call — the
+collector warms up at startup so the first response is already meaningful.
+
+```json
+{
+  "cpu":    { "us_percent": 1.2, "sy_percent": 0.3, "idle_percent": 98.1, "wa_percent": 0.4, "st_percent": 0.0 },
+  "memory": { "total_bytes": 2062352384, "used_bytes": 980000000, "available_bytes": 1082352384, "used_percent": 47.5 },
+  "swap":   { "total_bytes": 0, "used_bytes": 0, "used_percent": 0 },
+  "disk":   { "device": "vda", "reads_per_sec": 4, "writes_per_sec": 10 },
+  "net":    { "interface": "eth0", "rx_bytes_per_sec": 12400, "tx_bytes_per_sec": 8800,
+              "rx_packets_per_sec": 14, "tx_packets_per_sec": 12,
+              "rx_drops_total": 705134, "tx_drops_total": 0 },
+  "load":   { "load1": 0.15, "load5": 0.03, "load15": 0.01, "procs": 2 }
+}
+```
+
+**Key fields to watch:**
+- `st_percent` — CPU steal time; high values mean the hypervisor is throttling your VPS.
+- `wa_percent` — I/O wait; high values indicate disk bottleneck.
+- `rx_drops_total` — Lifetime dropped packets on the main interface; a rapidly growing counter means network congestion at the provider level.
+- `swap.used_percent` — Any non-zero swap usage under SSH/SCP workloads will cause severe transfer slowdowns.
 
 ---
 
@@ -123,7 +152,8 @@ pewpew/
 │       ├── geoip/       # GeoIP resolver + LRU cache
 │       ├── store/       # SQLite repository
 │       ├── firewall/    # UFW backend
-│       └── scan/        # Port scanner + vuln engine
+│       ├── scan/        # Port scanner + vuln engine
+│       └── metrics/     # VPS health collector (reads /proc, zero deps)
 ├── internal/transport/http/   # REST handlers + WebSocket broadcaster
 ├── static/              # embed.FS: compiled Vue SPA
 └── web/                 # Vue 3 + Vite source
@@ -139,6 +169,7 @@ pewpew/
 |-----------|---------------|
 | Go process | ~5–10 MB |
 | SQLite (30d retention, ~100k events/day) | < 50 MB |
+| Metrics collector (ring buffers) | < 1 MB |
 | **Total target** | **< 100 MB** |
 
 Designed to run comfortably on the smallest VPS plans (1–2 GB RAM).
@@ -157,6 +188,8 @@ Designed to run comfortably on the smallest VPS plans (1–2 GB RAM).
 - [ ] Dashboard screenshot + live map GIF in README
 
 ### Phase 2 — Extended Visibility
+- [x] **VPS Health Metrics** — CPU, RAM, swap, disk I/O, network RX/TX/drops, load average via `/api/metrics`
+- [ ] **Metrics frontend widget** — gauge + sparklines in Vue dashboard, alerts for steal/iowait/drops
 - [ ] **Docker-aware** — mount `/var/run/docker.sock`, monitor container logs
 - [ ] MySQL brute-force detection from Docker container logs
 - [ ] **Nginx scan detection** — flag probes for `/.env`, `/wp-login.php`, `/phpmyadmin`
