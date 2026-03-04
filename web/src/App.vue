@@ -39,6 +39,7 @@
         <button :class="['nav-btn', { active: activeTab === 'ports' }]" @click="activeTab = 'ports'">Ports</button>
         <button :class="['nav-btn', { active: activeTab === 'vulns' }]" @click="activeTab = 'vulns'">Vulns</button>
         <button :class="['nav-btn', { active: activeTab === 'recs' }]" @click="activeTab = 'recs'">Recommendations</button>
+        <button :class="['nav-btn', { active: activeTab === 'metrics' }]" @click="activeTab = 'metrics'">📈 VPS Health</button>
       </nav>
     </header>
 
@@ -62,6 +63,7 @@ import StatusView from './views/StatusView.vue'
 import PortsView from './views/PortsView.vue'
 import VulnsView from './views/VulnsView.vue'
 import RecommendationsView from './views/RecommendationsView.vue'
+import MetricsView from './views/MetricsView.vue'
 import { useStore } from './stores/store.js'
 
 const activeTab = ref('map')
@@ -77,7 +79,8 @@ const currentView = computed(() => {
     status: StatusView,
     ports: PortsView,
     vulns: VulnsView,
-    recs: RecommendationsView
+    recs: RecommendationsView,
+    metrics: MetricsView
   }
   return views[activeTab.value]
 })
@@ -156,6 +159,7 @@ onUnmounted(() => {
 .navbar-nav {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .nav-btn {
