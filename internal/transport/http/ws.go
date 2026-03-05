@@ -43,9 +43,12 @@ func BroadcastEvent(event *domain.SecurityEvent) {
 	if broadcaster != nil {
 		select {
 		case broadcaster.eventCh <- event:
+			log.Printf("[ws] broadcast event id=%d ip=%s type=%s lat=%v lon=%v", event.ID, event.IP, event.EventType, event.Latitude, event.Longitude)
 		default:
-			log.Println("broadcast channel full, dropping event")
+			log.Println("[ws] broadcast channel full, dropping event")
 		}
+	} else {
+		log.Println("[ws] broadcaster nil, cannot broadcast")
 	}
 }
 
@@ -61,7 +64,7 @@ func (b *EventBroadcaster) run() {
 				connMu.Lock()
 				defer connMu.Unlock()
 				if err := client.WriteJSON(e); err != nil {
-					log.Printf("websocket write error: %v", err)
+					log.Printf("[ws] write error: %v", err)
 					client.Close()
 					b.mu.Lock()
 					delete(b.clients, client)
@@ -78,7 +81,7 @@ func (b *EventBroadcaster) run() {
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("websocket upgrade error: %v", err)
+		log.Printf("[ws] websocket upgrade error: %v", err)
 		return
 	}
 	defer conn.Close()
@@ -88,7 +91,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	broadcaster.writeMu[conn] = &sync.Mutex{}
 	broadcaster.mu.Unlock()
 
-	log.Println("websocket client connected")
+	log.Printf("[ws] client connected (total clients: %d)", len(broadcaster.clients))
 
 	// Keep connection alive
 	for {
@@ -98,7 +101,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			delete(broadcaster.clients, conn)
 			delete(broadcaster.writeMu, conn)
 			broadcaster.mu.Unlock()
-			log.Println("websocket client disconnected")
+			log.Printf("[ws] client disconnected: %v", err)
 			break
 		}
 	}

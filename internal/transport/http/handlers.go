@@ -30,6 +30,7 @@ func (s *Server) getEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	events, err := s.db.GetRecentEvents(limit)
 	if err != nil {
+		log.Printf("[events] ERROR GetRecentEvents: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -38,8 +39,17 @@ func (s *Server) getEventsHandler(w http.ResponseWriter, r *http.Request) {
 		events = []*domain.SecurityEvent{}
 	}
 
+	withGeo := 0
+	for _, e := range events {
+		if e.Latitude != 0 || e.Longitude != 0 {
+			withGeo++
+		}
+	}
+	log.Printf("[events] GET /api/events limit=%d -> %d events (%d with lat/lon)", limit, len(events), withGeo)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(events)
+	if errEncode := json.NewEncoder(w).Encode(events); errEncode != nil {
+		log.Printf("[events] ERROR encoding response: %v", errEncode)
+	}
 }
 
 // statusHandler retorna estado del sistema

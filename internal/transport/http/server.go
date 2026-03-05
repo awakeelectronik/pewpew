@@ -144,7 +144,7 @@ var frontendFS fs.FS
 func init() {
 	sub, err := fs.Sub(static.FS, "dist")
 	if err != nil {
-		// static/dist no existe (build sin make build); frontendHandler devolverá fallback
+		log.Printf("[http] WARNING: frontend dist not found (run 'make build'): %v", err)
 		return
 	}
 	frontendFS = sub

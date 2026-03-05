@@ -60,6 +60,14 @@ Open **http://127.0.0.1:9090** → done.
 - `ufw` installed for IP banning (optional)
 - `gcc` (for SQLite CGO compilation)
 
+**Attack map (lat/lon):** The live map shows attack origins only when GeoIP data is available. Install MaxMind GeoLite2-City (free, registration required at [MaxMind](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)), then place `GeoLite2-City.mmdb` in one of:
+
+- `/usr/share/GeoIP/GeoLite2-City.mmdb`
+- `/var/lib/GeoIP/GeoLite2-City.mmdb`
+- `~/.pewpew/GeoLite2-City.mmdb`
+
+Restart PewPew; **new** events will get coordinates. Existing DB events keep `lat=0 lon=0` until new attacks arrive.
+
 ---
 
 ## 🌐 Expose via Nginx (recommended)

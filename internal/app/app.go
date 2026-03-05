@@ -48,7 +48,7 @@ func New() (*App, error) {
 	// 3. Init GeoIP (offline + cache)
 	geoipResolver, err := geoip.NewResolver()
 	if err != nil {
-		log.Printf("warning: geoip resolver init failed: %v (will use placeholder)\n", err)
+		log.Printf("warning: geoip resolver init failed: %v (will use placeholder; map will show no coordinates). Install GeoLite2-City.mmdb in /usr/share/GeoIP/ or ~/.pewpew/ and restart.", err)
 		geoipResolver = geoip.NewPlaceholderResolver()
 	}
 
