@@ -109,6 +109,23 @@ The live map shows attack origins when GeoIP data is available. Get the free Max
 
 Restart PewPew — new events get coordinates immediately.
 
+### ⚙️ Run as a systemd service
+
+If you installed the binary at `/opt/pewpew/pewpew`:
+
+```bash
+# Copy the unit file
+sudo cp deploy/pewpew.service /etc/systemd/system/
+
+# Reload systemd and enable + start
+sudo systemctl daemon-reload
+sudo systemctl enable pewpew
+sudo systemctl start pewpew
+sudo systemctl status pewpew
+```
+
+Use `sudo systemctl restart pewpew` after updates, or `sudo systemctl stop pewpew` to stop the service.
+
 ---
 
 ## 🌐 Expose via Nginx (recommended)
