@@ -4,7 +4,7 @@
 
 ### Your VPS is under attack right now. Let's watch.
 
-**Real-time SSH attack map + VPS health monitor — single binary, zero config, ~10 MB RAM.**
+**Real-time SSH attack map + VPS health monitor — single binary, zero config, ~20 MB RAM.**
 
 [![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)](https://vuejs.org)
@@ -283,7 +283,7 @@ MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-Made with ☕ and a healthy paranoia about open ports.
+Made with ☕ and a healthy paranoia about VPS security.
 
 **[⭐ Star this repo](https://github.com/awakeelectronik/pewpew)** if PewPew helps you keep your server safe.
 

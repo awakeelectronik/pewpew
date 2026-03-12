@@ -75,6 +75,12 @@ El MVP debe enfocarse en señales universales (SSH) y en una UI que sea comparti
 11. **FIM (integridad de archivos)** opcional.
 12. **Multi-nodo** (agente liviano / envío a central).
 
+### Fase 4 (mejoras futuras)
+13. **Vista de procesos del sistema (consumo RAM y recursos)**:
+   - Listado o "top" de procesos del VPS (lectura desde `/proc`) con memoria (RSS), opcionalmente CPU y nombre/comando.
+   - Ordenable por RAM/CPU; opcionalmente filtrable por usuario o nombre.
+   - Objetivo: diagnosticar qué servicios consumen recursos desde el dashboard, sin SSH ni agentes pesados (solo lectura de `/proc` en el host).
+
 ---
 
 ## 3) Arquitectura técnica
