@@ -10,9 +10,13 @@
 [![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vue.js&logoColor=white)](https://vuejs.org)
 [![SQLite](https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white)](https://sqlite.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![RAM](https://img.shields.io/badge/RAM-~10MB-success)](#-ram-usage)
+[![RAM](https://img.shields.io/badge/RAM-~20MB-success)](#-ram-usage)
 
 _Drop one binary on your server. Watch the world try to hack you. Ban them with one click._
+
+<br/>
+
+<img src="assets/screenshots/1.png" width="800" alt="Live Attack Map" />
 
 </div>
 
@@ -20,7 +24,7 @@ _Drop one binary on your server. Watch the world try to hack you. Ban them with 
 
 ## The story
 
-Every VPS on the internet gets **thousands of SSH brute-force attempts every single day**. Most people never know. PewPew reads your `/var/log/auth.log` in real time, plots every attack on a live world map, and lets you ban offenders with one click — all from a dark-mode dashboard served by a **single 10 MB Go binary with zero runtime dependencies**.
+Every VPS on the internet gets **thousands of SSH brute-force attempts every single day**. Most people never know. PewPew reads your `/var/log/auth.log` in real time, plots every attack on a live world map, and lets you ban offenders with one click — all from a dark-mode dashboard served by a **single 20 MB Go binary with zero runtime dependencies**.
 
 No Docker. No Elasticsearch. No agents. No config files. Just:
 
@@ -30,7 +34,7 @@ cd pewpew && make build
 ./bin/pewpew start
 ```
 
-Open **http://127.0.0.1:9090** and watch the pew pew map light up. 🌍💥
+Open **http://127.0.0.1:9090** and watch the map light up. 🌍💥
 
 ---
 
@@ -39,20 +43,40 @@ Open **http://127.0.0.1:9090** and watch the pew pew map light up. 🌍💥
 ### 🗺️ Live Attack Map
 Canvas world map with proper Mercator projection and Natural Earth GeoJSON. Every SSH attack animates in real time via WebSocket. Watching bots from Russia, China, and the US hammer your port 22 at 3am is oddly satisfying.
 
-### 🔨 One-Click IP Ban
-See an attacker? Click **BAN**. PewPew runs `ufw deny from <ip>`, logs the action with a full audit trail, and validates every IP before touching your firewall. Unban just as easily.
+<img src="assets/screenshots/2.png" width="800" alt="Live Feed" />
 
 ### 📡 Live Event Feed
 Filterable real-time stream of SSH events: failed passwords, invalid users, accepted logins — every line from your auth log, enriched with country and city from offline GeoIP.
 
+<img src="assets/screenshots/3.png" width="800" alt="Top Attackers" />
+
 ### 🏆 Top Attackers Leaderboard
 Ranked by attempt count, with country, last seen timestamp, and ban button. See who's been the most persistent.
+
+### 🔨 One-Click IP Ban
+See an attacker? Click **BAN**. PewPew runs `ufw deny from <ip>`, logs the action with a full audit trail, and validates every IP before touching your firewall. Unban just as easily.
+
+<img src="assets/screenshots/4.png" width="800" alt="Active Bans" />
 
 ### 🖥️ VPS Health Metrics
 Real-time CPU, RAM, swap, disk I/O, network RX/TX/drops, and load average — read directly from `/proc`. Zero deps, zero agents. Pay special attention to `st_percent` (CPU steal): if it's climbing, your hypervisor is throttling you and you're not getting what you paid for.
 
+<img src="assets/screenshots/9.png" width="800" alt="VPS Health" />
+
 ### 🔒 Port Scanner + Vuln Engine
 Sees your open ports, flags risky ones with reasons, and gives you hardening recommendations based on your actual server state — not generic checklists.
+
+<div align="center">
+  <img src="assets/screenshots/5.png" width="390" alt="Vulnerability Findings" />
+  &nbsp;
+  <img src="assets/screenshots/6.png" width="390" alt="Open Ports" />
+</div>
+
+<div align="center">
+  <img src="assets/screenshots/7.png" width="390" alt="System Status" />
+  &nbsp;
+  <img src="assets/screenshots/8.png" width="390" alt="Hardening Recommendations" />
+</div>
 
 ---
 
@@ -118,7 +142,7 @@ server {
 
 ## 🖥️ VPS Health Metrics
 
-`GET /api/metrics` — a real-time snapshot computed from `/proc` files. All rate values (bytes/s, ops/s) are deltas against the previous call. The collector warms up at startup so the first response is already meaningful.
+`GET /api/metrics` — a real-time snapshot computed from `/proc` files. All rate values (bytes/s, ops/s) are deltas against the previous call.
 
 ```json
 {
@@ -191,7 +215,7 @@ Clean Architecture layers, repository pattern, broadcaster pattern for WebSocket
 
 | Component | Typical |
 |-----------|---|
-| Go process | ~5–10 MB |
+| Go process | ~10–20 MB |
 | SQLite (30d retention, ~100k events/day) | < 50 MB |
 | Metrics collector (ring buffers) | < 1 MB |
 | **Total** | **< 100 MB** |
@@ -213,7 +237,7 @@ Designed to run comfortably on the smallest VPS plans (512 MB – 2 GB RAM) with
 - [x] Port scanner + vulnerability engine
 - [x] Hardening recommendations engine
 - [x] Vue 3 + Vite SPA embedded in binary via `embed.FS`
-- [x] Single-binary deploy (~10 MB)
+- [x] Single-binary deploy (~22 MB)
 - [x] Dark-mode dashboard (Map, Feed, Attackers, Bans, Ports, Vulns, Status)
 - [x] World map with Mercator projection + Natural Earth GeoJSON polygons
 - [x] VPS health metrics from `/proc` (CPU, RAM, disk I/O, network RX/TX/drops, load)
