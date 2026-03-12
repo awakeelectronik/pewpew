@@ -221,7 +221,7 @@ Designed to run comfortably on the smallest VPS plans (512 MB – 2 GB RAM) with
 ### Phase 2 — Extended Visibility 🚧 In Progress
 - [ ] Metrics frontend widget — gauges + sparklines in Vue, alerts for steal/iowait/drops
 - [ ] `install.sh` — one-liner: download release, create systemd unit, auto-start
-- [ ] GitHub Releases: `linux-amd64` + `linux-arm64` prebuilt binaries + checksums
+- [x] GitHub Releases: `linux-amd64` + `linux-arm64` prebuilt binaries + checksums
 - [ ] Built-in auth — login (user/password + JWT cookie) so you can safely expose to internet
 - [ ] Docker-aware — tail container logs (MySQL brute-force, Redis unauth, Nginx probes)
 - [ ] Nginx scan detection — flag probes for `/.env`, `/wp-login.php`, `/phpmyadmin`, `/.git`

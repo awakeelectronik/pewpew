@@ -3,7 +3,7 @@
     <header class="navbar">
       <div class="navbar-brand">
         <h1>🔫 PewPew</h1>
-        <span class="version">v0.1.0-alpha</span>
+        <span class="version">v1.0.0</span>
       </div>
       <nav class="navbar-nav">
         <button 

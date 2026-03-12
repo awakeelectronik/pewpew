@@ -11,7 +11,7 @@ import (
 	"pewpew/internal/app"
 )
 
-const version = "0.1.0-alpha"
+const version = "1.0.0"
 
 func main() {
 	if len(os.Args) > 1 {
