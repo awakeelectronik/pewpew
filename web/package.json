@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "axios": "^1.6.0",
-    "vue": "^3.4.0"
+    "topojson-client": "^3.1.0",
+    "vue": "^3.4.0",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

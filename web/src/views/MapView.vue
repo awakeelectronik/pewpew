@@ -9,6 +9,9 @@
         <span class="stat">
           <strong>{{ store.state.topAttackers.length }}</strong> Unique IPs
         </span>
+        <span v-if="orphanCount > 0" class="stat" title="Eventos sin geolocalización">
+          <strong>{{ orphanCount }}</strong> Sin geo
+        </span>
         <span :class="['stat', { connected: store.state.wsConnected }]">
           {{ store.state.wsConnected ? 'Live' : 'Offline' }}
         </span>
@@ -19,9 +22,33 @@
       <canvas
         ref="canvasEl"
         class="attack-map"
-        :width="canvasWidth"
-        :height="canvasHeight"
+        @wheel.prevent="onWheel"
+        @mousedown="onMouseDown"
+        @mousemove="onMouseMove"
+        @mouseup="onMouseUp"
+        @mouseleave="onMouseLeave"
+        :style="{ cursor: isDragging ? 'grabbing' : (tooltip.visible ? 'pointer' : 'grab') }"
       />
+      <div v-if="tooltip.visible" class="map-tooltip" :style="tooltipStyle">
+        <div class="tooltip-ip">{{ tooltip.ip }}</div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">País</span>
+          <span>{{ tooltip.country }}</span>
+        </div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">Tipo</span>
+          <span :class="eventTypeClass(tooltip.eventType)">{{ tooltip.eventType }}</span>
+        </div>
+        <div class="tooltip-row">
+          <span class="tooltip-label">Hora</span>
+          <span>{{ tooltip.time }}</span>
+        </div>
+      </div>
+      <div class="zoom-controls">
+        <button @click="zoomIn" title="Acercar">+</button>
+        <button @click="resetView" title="Restablecer vista">⟳</button>
+        <button @click="zoomOut" title="Alejar">−</button>
+      </div>
     </div>
 
     <div class="last-events">
@@ -44,9 +71,13 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useStore } from '../stores/store.js'
-import worldCountries from '../data/world-countries.json'
+import { feature } from 'topojson-client'
+import topology from 'world-atlas/countries-110m.json'
+import axios from 'axios'
+
+const worldCountries = feature(topology, topology.objects.countries)
 
 const BEZIER_SAMPLES = 50
 const MAX_ANIMATIONS = 30
@@ -54,8 +85,12 @@ const ARC_DURATION_MS = 600
 const RIPPLE_DURATION_MS = 400
 const FADEOUT_AFTER_MS = 3500
 const FADEOUT_DURATION_MS = 500
+const MIN_SCALE = 1
+const MAX_SCALE = 12
 
 const store = useStore()
+const vpsLat = ref(0)
+const vpsLon = ref(0)
 const canvasEl = ref(null)
 const canvasWrapper = ref(null)
 const canvasWidth = ref(1200)
@@ -65,8 +100,36 @@ const animationFrameId = ref(null)
 const resizeObserver = ref(null)
 const lastFrameTime = ref(0)
 const loopRunning = ref(false)
+const orphanCount = ref(0)
+
+const viewScale = ref(1)
+const viewPanX = ref(0)
+const viewPanY = ref(0)
+
+const isDragging = ref(false)
+const dragStartX = ref(0)
+const dragStartY = ref(0)
+const dragStartPanX = ref(0)
+const dragStartPanY = ref(0)
+
+const tooltip = reactive({
+  visible: false,
+  x: 0,
+  y: 0,
+  ip: '',
+  country: '',
+  eventType: '',
+  time: ''
+})
+
+const pendingRedraw = ref(false)
 
 const lastFiveEvents = computed(() => store.state.events.slice(0, 5))
+
+const tooltipStyle = computed(() => ({
+  left: tooltip.x + 'px',
+  top: tooltip.y + 'px'
+}))
 
 function eventTypeClass(eventType) {
   if (!eventType) return 'event-type-other'
@@ -95,29 +158,184 @@ function formatRelative(timestamp) {
   return `hace ${Math.round(sec / 86400)}d`
 }
 
-/**
- * Web Mercator projection: converts lat/lon to pixel coordinates
- * This is the standard projection used by Google Maps, OpenStreetMap, etc.
- */
 function latLonToMercator(lat, lon, canvasW, canvasH) {
-  // Clamp latitude to valid Mercator range
   const maxLat = 85.051129
   const clampedLat = Math.max(-maxLat, Math.min(maxLat, lat))
-
-  // Convert to radians
   const latRad = (clampedLat * Math.PI) / 180
-  const lonRad = (lon * Math.PI) / 180
-
-  // Web Mercator formula
   const x = ((lon + 180) / 360) * canvasW
   const y = ((Math.PI - Math.log(Math.tan(Math.PI / 4 + latRad / 2))) / (2 * Math.PI)) * canvasH
-
   return { x, y }
 }
 
-/**
- * Draw country polygons on the map
- */
+function vpsScreenPos(w, h) {
+  return latLonToMercator(vpsLat.value, vpsLon.value, w, h)
+}
+
+// --- Mouse coordinate helpers ---
+
+function getMousePos(e) {
+  const canvas = canvasEl.value
+  if (!canvas) return { canvasX: 0, canvasY: 0, worldX: 0, worldY: 0 }
+  const rect = canvas.getBoundingClientRect()
+  const sx = canvas.width / rect.width
+  const sy = canvas.height / rect.height
+  const canvasX = (e.clientX - rect.left) * sx
+  const canvasY = (e.clientY - rect.top) * sy
+  const worldX = (canvasX - viewPanX.value) / viewScale.value
+  const worldY = (canvasY - viewPanY.value) / viewScale.value
+  return { canvasX, canvasY, worldX, worldY }
+}
+
+function clampPan() {
+  const w = canvasWidth.value
+  const h = canvasHeight.value
+  const s = viewScale.value
+  viewPanX.value = Math.min(0, Math.max(w * (1 - s), viewPanX.value))
+  viewPanY.value = Math.min(0, Math.max(h * (1 - s), viewPanY.value))
+}
+
+function requestRedraw() {
+  if (!loopRunning.value && !pendingRedraw.value) {
+    pendingRedraw.value = true
+    requestAnimationFrame(() => {
+      pendingRedraw.value = false
+      if (!loopRunning.value) redrawStatic()
+    })
+  }
+}
+
+// --- Zoom & Pan ---
+
+function onWheel(e) {
+  const { canvasX, canvasY } = getMousePos(e)
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+  const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, viewScale.value * factor))
+  const ratio = newScale / viewScale.value
+  viewPanX.value = canvasX - (canvasX - viewPanX.value) * ratio
+  viewPanY.value = canvasY - (canvasY - viewPanY.value) * ratio
+  viewScale.value = newScale
+  clampPan()
+  requestRedraw()
+}
+
+function onMouseDown(e) {
+  if (e.button !== 0) return
+  isDragging.value = true
+  const { canvasX, canvasY } = getMousePos(e)
+  dragStartX.value = canvasX
+  dragStartY.value = canvasY
+  dragStartPanX.value = viewPanX.value
+  dragStartPanY.value = viewPanY.value
+  tooltip.visible = false
+}
+
+function onMouseMove(e) {
+  if (isDragging.value) {
+    const { canvasX, canvasY } = getMousePos(e)
+    viewPanX.value = dragStartPanX.value + (canvasX - dragStartX.value)
+    viewPanY.value = dragStartPanY.value + (canvasY - dragStartY.value)
+    clampPan()
+    requestRedraw()
+    return
+  }
+
+  const { worldX, worldY } = getMousePos(e)
+  const hitRadius = 10 / viewScale.value
+  const hitRadiusSq = hitRadius * hitRadius
+  let found = null
+
+  for (const anim of activeAnimations.value) {
+    const dx = worldX - anim.startX
+    const dy = worldY - anim.startY
+    if (dx * dx + dy * dy < hitRadiusSq) {
+      found = anim
+      break
+    }
+  }
+
+  if (found && found.event) {
+    const wrapperRect = canvasWrapper.value.getBoundingClientRect()
+    const rawX = e.clientX - wrapperRect.left + 14
+    const rawY = e.clientY - wrapperRect.top + 14
+    tooltip.visible = true
+    tooltip.x = Math.min(rawX, wrapperRect.width - 210)
+    tooltip.y = Math.min(rawY, wrapperRect.height - 110)
+    tooltip.ip = found.event.ip || '—'
+    tooltip.country = found.event.country || '—'
+    tooltip.eventType = found.event.event_type || '—'
+    tooltip.time = formatRelative(found.event.timestamp)
+  } else {
+    tooltip.visible = false
+  }
+}
+
+function onMouseUp() {
+  isDragging.value = false
+}
+
+function onMouseLeave() {
+  isDragging.value = false
+  tooltip.visible = false
+}
+
+function zoomIn() {
+  const cx = canvasWidth.value / 2
+  const cy = canvasHeight.value / 2
+  const newScale = Math.min(MAX_SCALE, viewScale.value * 1.5)
+  const ratio = newScale / viewScale.value
+  viewPanX.value = cx - (cx - viewPanX.value) * ratio
+  viewPanY.value = cy - (cy - viewPanY.value) * ratio
+  viewScale.value = newScale
+  clampPan()
+  requestRedraw()
+}
+
+function zoomOut() {
+  const cx = canvasWidth.value / 2
+  const cy = canvasHeight.value / 2
+  const newScale = Math.max(MIN_SCALE, viewScale.value / 1.5)
+  const ratio = newScale / viewScale.value
+  viewPanX.value = cx - (cx - viewPanX.value) * ratio
+  viewPanY.value = cy - (cy - viewPanY.value) * ratio
+  viewScale.value = newScale
+  clampPan()
+  requestRedraw()
+}
+
+function resetView() {
+  viewScale.value = 1
+  viewPanX.value = 0
+  viewPanY.value = 0
+  requestRedraw()
+}
+
+// --- Drawing ---
+
+function drawGraticule(ctx, w, h) {
+  ctx.strokeStyle = 'rgba(51, 65, 85, 0.12)'
+  ctx.lineWidth = 0.3
+
+  for (let lat = -60; lat <= 80; lat += 30) {
+    ctx.beginPath()
+    for (let lon = -180; lon <= 180; lon += 2) {
+      const { x, y } = latLonToMercator(lat, lon, w, h)
+      if (lon === -180) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+
+  for (let lon = -150; lon <= 180; lon += 30) {
+    ctx.beginPath()
+    for (let lat = -80; lat <= 80; lat += 2) {
+      const { x, y } = latLonToMercator(lat, lon, w, h)
+      if (lat === -80) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+}
+
 function drawCountries(ctx, width, height) {
   if (!worldCountries || !worldCountries.features) return
 
@@ -125,32 +343,35 @@ function drawCountries(ctx, width, height) {
   ctx.strokeStyle = '#334155'
   ctx.lineWidth = 0.5
 
-  worldCountries.features.forEach((feature) => {
-    if (feature.geometry.type === 'Polygon') {
-      const rings = feature.geometry.coordinates
-      drawPolygon(ctx, rings, width, height)
+  worldCountries.features.forEach((feat) => {
+    if (feat.id === '010') return
+
+    const { type, coordinates } = feat.geometry
+    if (type === 'Polygon') {
+      drawPolygon(ctx, coordinates, width, height)
+    } else if (type === 'MultiPolygon') {
+      coordinates.forEach((polygon) => drawPolygon(ctx, polygon, width, height))
     }
   })
 }
 
-/**
- * Draw a single polygon with Mercator projection
- */
 function drawPolygon(ctx, rings, width, height) {
   rings.forEach((ring, ringIdx) => {
     ctx.beginPath()
-    let isFirst = true
+    let prevLon = null
 
     for (let i = 0; i < ring.length; i++) {
       const [lon, lat] = ring[i]
       const { x, y } = latLonToMercator(lat, lon, width, height)
 
-      if (isFirst) {
+      if (i === 0) {
         ctx.moveTo(x, y)
-        isFirst = false
+      } else if (prevLon !== null && Math.abs(lon - prevLon) > 170) {
+        ctx.moveTo(x, y)
       } else {
         ctx.lineTo(x, y)
       }
+      prevLon = lon
     }
 
     ctx.closePath()
@@ -162,9 +383,28 @@ function drawPolygon(ctx, rings, width, height) {
   })
 }
 
-/**
- * Cubic Bézier curve point calculation
- */
+function drawVPSMarker(ctx, x, y, nowMs) {
+  const pulse = 8 + Math.sin((nowMs || Date.now()) * 0.003) * 3
+  ctx.beginPath()
+  ctx.arc(x, y, pulse, 0, Math.PI * 2)
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  ctx.beginPath()
+  ctx.arc(x, y, 5, 0, Math.PI * 2)
+  ctx.fillStyle = '#38bdf8'
+  ctx.fill()
+  ctx.strokeStyle = '#0f172a'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.7)'
+  ctx.font = '10px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('VPS', x, y - 14)
+}
+
 function cubicBezierPoint(t, x0, y0, x1, y1, x2, y2, x3, y3) {
   const u = 1 - t
   const u2 = u * u
@@ -176,9 +416,6 @@ function cubicBezierPoint(t, x0, y0, x1, y1, x2, y2, x3, y3) {
   return { x, y }
 }
 
-/**
- * Sample a cubic Bézier curve into discrete points
- */
 function sampleCubicBezier(x0, y0, x1, y1, x2, y2, x3, y3, n) {
   const points = []
   for (let i = 0; i <= n; i++) {
@@ -188,45 +425,75 @@ function sampleCubicBezier(x0, y0, x1, y1, x2, y2, x3, y3, n) {
   return points
 }
 
-/**
- * Draw arc from origin to center with progressive animation
- */
 function drawArcProgressive(ctx, startX, startY, endX, endY, progress, color) {
-  // Control points for the Bézier curve
-  // The arc peaks above the start/end points
   const ctrlY = Math.min(startY, endY) - Math.min(80, Math.abs(startX - endX) * 0.25)
   const ctrl1X = startX + (endX - startX) * 0.25
   const ctrl1Y = ctrlY
   const ctrl2X = startX + (endX - startX) * 0.75
   const ctrl2Y = ctrlY
 
-  const points = sampleCubicBezier(startX, startY, ctrl1X, ctrl1Y, ctrl2X, ctrl2Y, endX, endY, BEZIER_SAMPLES)
+  const points = sampleCubicBezier(
+    startX, startY, ctrl1X, ctrl1Y, ctrl2X, ctrl2Y, endX, endY, BEZIER_SAMPLES
+  )
   const lastIdx = Math.floor(progress * BEZIER_SAMPLES)
 
   if (lastIdx <= 0) return
 
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2.5
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
+
   ctx.beginPath()
   ctx.moveTo(points[0].x, points[0].y)
-
   for (let i = 1; i <= Math.min(lastIdx, points.length - 1); i++) {
     ctx.lineTo(points[i].x, points[i].y)
   }
 
+  const savedAlpha = ctx.globalAlpha
+
+  ctx.strokeStyle = color
+  ctx.lineWidth = 6
+  ctx.globalAlpha = savedAlpha * 0.15
+  ctx.stroke()
+
+  ctx.globalAlpha = savedAlpha
+  ctx.lineWidth = 2
   ctx.stroke()
 }
 
-/**
- * Enqueue a new animation when an attack event arrives
- */
+// --- Static redraw (when no animations are running) ---
+
+function redrawStatic() {
+  const ctx = canvasEl.value?.getContext('2d')
+  if (!ctx) return
+  const w = canvasWidth.value
+  const h = canvasHeight.value
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.fillStyle = '#0f172a'
+  ctx.fillRect(0, 0, w, h)
+
+  ctx.save()
+  ctx.translate(viewPanX.value, viewPanY.value)
+  ctx.scale(viewScale.value, viewScale.value)
+
+  drawGraticule(ctx, w, h)
+  drawCountries(ctx, w, h)
+  const vpsStatic = vpsScreenPos(w, h)
+  drawVPSMarker(ctx, vpsStatic.x, vpsStatic.y)
+
+  ctx.restore()
+}
+
+// --- Animations ---
+
 function enqueueAnimation(event) {
   const lat = event.latitude
   const lon = event.longitude
 
-  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) return
+  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) {
+    orphanCount.value++
+    return
+  }
 
   const w = canvasWidth.value
   const h = canvasHeight.value
@@ -234,13 +501,12 @@ function enqueueAnimation(event) {
 
   if (!start) return
 
-  // Center point of the map (server location)
-  const endX = w / 2
-  const endY = h / 2
+  const vps = vpsScreenPos(w, h)
+  const endX = vps.x
+  const endY = vps.y
 
   const list = activeAnimations.value
 
-  // Evict oldest animation if we exceed max
   if (list.length >= MAX_ANIMATIONS) {
     list.sort((a, b) => a.createdAt - b.createdAt)
     list.shift()
@@ -266,9 +532,6 @@ function enqueueAnimation(event) {
   }
 }
 
-/**
- * Main animation loop using requestAnimationFrame
- */
 function startLoop() {
   loopRunning.value = true
   lastFrameTime.value = performance.now()
@@ -284,26 +547,23 @@ function startLoop() {
     const delta = (now - lastFrameTime.value) / 1000
     lastFrameTime.value = now
 
-    // Clear canvas
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.fillStyle = '#0f172a'
     ctx.fillRect(0, 0, w, h)
 
-    // Draw the world map
+    ctx.save()
+    ctx.translate(viewPanX.value, viewPanY.value)
+    ctx.scale(viewScale.value, viewScale.value)
+
+    drawGraticule(ctx, w, h)
     drawCountries(ctx, w, h)
 
-    // Draw center point (VPS location)
-    ctx.fillStyle = '#38bdf8'
-    ctx.beginPath()
-    ctx.arc(w / 2, h / 2, 6, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = '#0f172a'
-    ctx.lineWidth = 2
-    ctx.stroke()
+    const nowMs = Date.now()
+    const vpsPos = vpsScreenPos(w, h)
+    drawVPSMarker(ctx, vpsPos.x, vpsPos.y, nowMs)
 
     const list = activeAnimations.value
-    const nowMs = Date.now()
 
-    // Update animation phases
     for (let i = list.length - 1; i >= 0; i--) {
       const a = list[i]
       const age = nowMs - a.createdAt
@@ -321,8 +581,7 @@ function startLoop() {
           a.rippleStart = nowMs
         }
       } else if (a.phase === 'ripple') {
-        const rippleElapsed = nowMs - a.rippleStart
-        if (rippleElapsed > RIPPLE_DURATION_MS) {
+        if (nowMs - a.rippleStart > RIPPLE_DURATION_MS) {
           a.phase = 'fadeout'
         }
       } else if (a.phase === 'fadeout') {
@@ -335,19 +594,18 @@ function startLoop() {
       }
     }
 
-    // Draw arcs
     list.forEach((a) => {
       const color = getArcColor(a.event_type)
       if (a.phase === 'arc') {
         drawArcProgressive(ctx, a.startX, a.startY, a.endX, a.endY, a.progress, color)
-      } else if (a.phase === 'fadeout' && a.opacity > 0) {
-        ctx.globalAlpha = a.opacity
+      } else {
+        const alpha = a.phase === 'fadeout' ? a.opacity : 1
+        ctx.globalAlpha = alpha
         drawArcProgressive(ctx, a.startX, a.startY, a.endX, a.endY, 1, color)
         ctx.globalAlpha = 1
       }
     })
 
-    // Draw ripple effects
     list.forEach((a) => {
       if (a.phase === 'ripple' && a.rippleStart != null) {
         const elapsed = nowMs - a.rippleStart
@@ -366,7 +624,6 @@ function startLoop() {
       }
     })
 
-    // Draw pulsing source dots
     list.forEach((a) => {
       const pulse = 3.5 + Math.sin(nowMs * 0.005) * 2.5
       ctx.fillStyle = getArcColor(a.event_type)
@@ -377,7 +634,8 @@ function startLoop() {
       ctx.globalAlpha = 1
     })
 
-    // Stop loop if no active animations
+    ctx.restore()
+
     if (list.length === 0) {
       loopRunning.value = false
       cancelAnimationFrame(animationFrameId.value)
@@ -402,7 +660,6 @@ watch(
 
     const added = newLen - prevEventsLength
 
-    // Debounce large batches
     if (added > 10) {
       prevEventsLength = newLen
       return
@@ -410,64 +667,63 @@ watch(
 
     prevEventsLength = newLen
 
-    // Enqueue animations for new events
     for (let i = 0; i < added; i++) {
       const ev = store.state.events[i]
-      if (ev && (ev.latitude != null || ev.longitude != null)) {
-        enqueueAnimation(ev)
-      }
+      if (ev) enqueueAnimation(ev)
     }
   }
 )
 
-onMounted(async () => {
-  await store.fetchEvents(500)
-  prevEventsLength = store.state.events.length
+function applyCanvasSize() {
+  const el = canvasEl.value
+  if (!el || !canvasWrapper.value) return
 
-  // Setup canvas sizing with ResizeObserver
-  if (canvasWrapper.value && canvasEl.value) {
-    const setSize = () => {
-      if (!canvasWrapper.value) return
+  const rect = canvasWrapper.value.getBoundingClientRect()
+  const w = Math.max(400, Math.floor(rect.width))
+  const h = Math.max(300, Math.floor(rect.height))
 
-      const rect = canvasWrapper.value.getBoundingClientRect()
-      const w = Math.max(400, Math.floor(rect.width))
-      const h = Math.max(300, Math.floor(rect.height))
+  if (w === canvasWidth.value && h === canvasHeight.value) return
 
-      canvasWidth.value = w
-      canvasHeight.value = h
+  canvasWidth.value = w
+  canvasHeight.value = h
+  el.width = w
+  el.height = h
 
-      if (activeAnimations.value.length > 0 && !loopRunning.value) {
-        startLoop()
-      }
+  viewScale.value = 1
+  viewPanX.value = 0
+  viewPanY.value = 0
+
+  if (activeAnimations.value.length > 0 && !loopRunning.value) {
+    startLoop()
+  } else {
+    redrawStatic()
+  }
+}
+
+async function fetchVPSLocation() {
+  try {
+    const { data } = await axios.get('/api/status')
+    if (data && (data.vps_lat || data.vps_lon)) {
+      vpsLat.value = data.vps_lat
+      vpsLon.value = data.vps_lon
+      redrawStatic()
     }
+  } catch (_) { /* VPS location stays at 0,0 until available */ }
+}
 
-    setSize()
+onMounted(async () => {
+  if (canvasWrapper.value && canvasEl.value) {
+    applyCanvasSize()
 
-    resizeObserver.value = new ResizeObserver(setSize)
+    resizeObserver.value = new ResizeObserver(applyCanvasSize)
     resizeObserver.value.observe(canvasWrapper.value)
   }
 
-  // Initial draw
-  if (activeAnimations.value.length === 0) {
-    const ctx = canvasEl.value?.getContext('2d')
-    if (ctx && canvasEl.value) {
-      const w = canvasWidth.value
-      const h = canvasHeight.value
-
-      ctx.fillStyle = '#0f172a'
-      ctx.fillRect(0, 0, w, h)
-
-      drawCountries(ctx, w, h)
-
-      ctx.fillStyle = '#38bdf8'
-      ctx.beginPath()
-      ctx.arc(w / 2, h / 2, 6, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.strokeStyle = '#0f172a'
-      ctx.lineWidth = 2
-      ctx.stroke()
-    }
-  }
+  await Promise.all([
+    store.fetchEvents(500),
+    fetchVPSLocation()
+  ])
+  prevEventsLength = store.state.events.length
 })
 
 onUnmounted(() => {
@@ -527,6 +783,7 @@ onUnmounted(() => {
 }
 
 .canvas-wrapper {
+  position: relative;
   width: 100%;
   min-height: 400px;
   margin-bottom: 1rem;
@@ -546,6 +803,78 @@ onUnmounted(() => {
   max-width: 100%;
 }
 
+/* Tooltip */
+.map-tooltip {
+  position: absolute;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #38bdf8;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  pointer-events: none;
+  z-index: 10;
+  min-width: 160px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.tooltip-ip {
+  font-family: 'Courier New', monospace;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #38bdf8;
+  margin-bottom: 0.35rem;
+  border-bottom: 1px solid #1e293b;
+  padding-bottom: 0.3rem;
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: #e2e8f0;
+  padding: 0.15rem 0;
+}
+
+.tooltip-label {
+  color: #64748b;
+}
+
+/* Zoom controls */
+.zoom-controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 5;
+}
+
+.zoom-controls button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #94a3b8;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  backdrop-filter: blur(4px);
+  line-height: 1;
+}
+
+.zoom-controls button:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-color: #38bdf8;
+}
+
+/* Event list */
 .last-events {
   margin-top: 1.5rem;
 }

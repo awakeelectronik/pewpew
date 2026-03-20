@@ -21,13 +21,14 @@ import (
 
 // Server maneja HTTP
 type Server struct {
-	addr      string
-	db        store.Store
-	geoip     geoip.Resolver
-	collector *metrics.Collector
-	srv       *http.Server
-	mux       *http.ServeMux
-	startedAt time.Time
+	addr        string
+	db          store.Store
+	geoip       geoip.Resolver
+	collector   *metrics.Collector
+	srv         *http.Server
+	mux         *http.ServeMux
+	startedAt   time.Time
+	vpsLocation *geoip.GeoData
 }
 
 // NewServer crea servidor HTTP
@@ -45,6 +46,7 @@ func NewServer(addr string, db store.Store, geoip geoip.Resolver) *Server {
 
 	InitEventBroadcaster()
 	s.setupRoutes()
+	go s.resolveVPSLocation()
 	return s
 }
 
@@ -184,6 +186,35 @@ func (s *Server) frontendHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, frontendFS, path)
 }
 
+func (s *Server) resolveVPSLocation() {
+	endpoints := []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://icanhazip.com",
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, url := range endpoints {
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		body := make([]byte, 64)
+		n, _ := resp.Body.Read(body)
+		resp.Body.Close()
+		ip := strings.TrimSpace(string(body[:n]))
+		if ip == "" {
+			continue
+		}
+		geo := s.geoip.Resolve(ip)
+		if geo.Latitude != 0 || geo.Longitude != 0 {
+			s.vpsLocation = &geo
+			log.Printf("[geoip] VPS location: %s, %s (%.4f, %.4f)", geo.City, geo.CountryCode, geo.Latitude, geo.Longitude)
+			return
+		}
+	}
+	log.Printf("[geoip] could not determine VPS location")
+}
+
 func (s *Server) runtimeStatus() map[string]any {
 	ports, _ := scan.DetectOpenPorts()
 	findings := scan.RunVulnerabilityScan(ports)
@@ -205,7 +236,23 @@ func (s *Server) runtimeStatus() map[string]any {
 		"version":          "0.1.0-alpha",
 		"uptime_seconds":   int64(time.Since(s.startedAt).Seconds()),
 		"bind_addr":        s.addr,
+		"vps_lat":          s.vpsLat(),
+		"vps_lon":          s.vpsLon(),
 	}
+}
+
+func (s *Server) vpsLat() float64 {
+	if s.vpsLocation != nil {
+		return s.vpsLocation.Latitude
+	}
+	return 0
+}
+
+func (s *Server) vpsLon() float64 {
+	if s.vpsLocation != nil {
+		return s.vpsLocation.Longitude
+	}
+	return 0
 }
 
 // ListenAndServe inicia el servidor
