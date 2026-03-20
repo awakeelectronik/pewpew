@@ -233,7 +233,7 @@ func (s *Server) runtimeStatus() map[string]any {
 		"active_bans":      s.db.GetActiveBanCount(),
 		"recent_findings":  len(findings),
 		"open_ports":       len(ports),
-		"version":          "0.1.0-alpha",
+		"version":          "1.0.0",
 		"uptime_seconds":   int64(time.Since(s.startedAt).Seconds()),
 		"bind_addr":        s.addr,
 		"vps_lat":          s.vpsLat(),

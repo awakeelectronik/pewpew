@@ -1,0 +1,18 @@
+[Unit]
+Description=PewPew — SSH attack map & VPS health monitor
+Documentation=https://github.com/awakeelectronik/pewpew
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pewpew
+ExecStart=/opt/pewpew/pewpew start
+Restart=on-failure
+RestartSec=5
+# UFW ban/unban needs root
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
