@@ -54,7 +54,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import MapView from './views/MapView.vue'
 import FeedView from './views/FeedView.vue'
 import AttackersView from './views/AttackersView.vue'
@@ -66,7 +66,18 @@ import RecommendationsView from './views/RecommendationsView.vue'
 import MetricsView from './views/MetricsView.vue'
 import { useStore } from './stores/store.js'
 
-const activeTab = ref('map')
+const activeTab = ref(
+  (typeof window !== 'undefined' && localStorage.getItem('pewpew_active_tab')) || 'map'
+)
+
+watch(activeTab, (newTab) => {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pewpew_active_tab', newTab)
+    }
+  } catch (_) {}
+})
+
 const hostname = ref('localhost')
 const store = useStore()
 
