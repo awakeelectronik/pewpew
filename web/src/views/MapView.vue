@@ -29,7 +29,7 @@
         @mouseleave="onMouseLeave"
         @dblclick="onDoubleClick"
         @touchstart="onTouchStart"
-        @touchmove.prevent="onTouchMove"
+        @touchmove="onTouchMove"
         @touchend="onTouchEnd"
         @touchcancel="onTouchEnd"
         :style="{ cursor: isDragging ? 'grabbing' : (tooltip.visible ? 'pointer' : 'grab') }"
@@ -301,10 +301,14 @@ function onDoubleClick(e) {
 }
 
 // --- Touch controls (Mobile & Tablet) ---
-let touchStartDist = 0
-let touchStartScale = 1
-let touchMidCanvasX = 0
-let touchMidCanvasY = 0
+// One finger is left to the browser so the page keeps scrolling over the map;
+// two fingers pan and pinch-zoom the map.
+let pinchStartDist = 0
+let pinchStartScale = 1
+let pinchStartMidX = 0
+let pinchStartMidY = 0
+let pinchStartPanX = 0
+let pinchStartPanY = 0
 
 function getTouchPos(touch) {
   const canvas = canvasEl.value
@@ -317,66 +321,46 @@ function getTouchPos(touch) {
   return { canvasX, canvasY }
 }
 
-function onTouchStart(e) {
-  if (e.touches.length === 1) {
-    isDragging.value = true
-    const { canvasX, canvasY } = getTouchPos(e.touches[0])
-    dragStartX.value = canvasX
-    dragStartY.value = canvasY
-    dragStartPanX.value = viewPanX.value
-    dragStartPanY.value = viewPanY.value
-    tooltip.visible = false
-  } else if (e.touches.length === 2) {
-    isDragging.value = false
-    const t0 = getTouchPos(e.touches[0])
-    const t1 = getTouchPos(e.touches[1])
-    const dx = t1.canvasX - t0.canvasX
-    const dy = t1.canvasY - t0.canvasY
-    touchStartDist = Math.hypot(dx, dy) || 1
-    touchStartScale = viewScale.value
-    touchMidCanvasX = (t0.canvasX + t1.canvasX) / 2
-    touchMidCanvasY = (t0.canvasY + t1.canvasY) / 2
-    tooltip.visible = false
+function getPinch(e) {
+  const t0 = getTouchPos(e.touches[0])
+  const t1 = getTouchPos(e.touches[1])
+  return {
+    dist: Math.hypot(t1.canvasX - t0.canvasX, t1.canvasY - t0.canvasY),
+    midX: (t0.canvasX + t1.canvasX) / 2,
+    midY: (t0.canvasY + t1.canvasY) / 2
   }
+}
+
+function onTouchStart(e) {
+  if (e.touches.length !== 2) return
+  e.preventDefault()
+  const { dist, midX, midY } = getPinch(e)
+  pinchStartDist = dist || 1
+  pinchStartScale = viewScale.value
+  pinchStartMidX = midX
+  pinchStartMidY = midY
+  pinchStartPanX = viewPanX.value
+  pinchStartPanY = viewPanY.value
+  tooltip.visible = false
 }
 
 function onTouchMove(e) {
-  if (e.touches.length === 1 && isDragging.value) {
-    const { canvasX, canvasY } = getTouchPos(e.touches[0])
-    viewPanX.value = dragStartPanX.value + (canvasX - dragStartX.value)
-    viewPanY.value = dragStartPanY.value + (canvasY - dragStartY.value)
-    clampPan()
-    requestRedraw()
-  } else if (e.touches.length === 2 && touchStartDist > 0) {
-    const t0 = getTouchPos(e.touches[0])
-    const t1 = getTouchPos(e.touches[1])
-    const dx = t1.canvasX - t0.canvasX
-    const dy = t1.canvasY - t0.canvasY
-    const currentDist = Math.hypot(dx, dy)
-    const factor = currentDist / touchStartDist
-    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, touchStartScale * factor))
-    const ratio = newScale / viewScale.value
-    viewPanX.value = touchMidCanvasX - (touchMidCanvasX - viewPanX.value) * ratio
-    viewPanY.value = touchMidCanvasY - (touchMidCanvasY - viewPanY.value) * ratio
-    viewScale.value = newScale
-    clampPan()
-    requestRedraw()
-  }
+  if (e.touches.length !== 2 || pinchStartDist === 0) return
+  e.preventDefault()
+  const { dist, midX, midY } = getPinch(e)
+  const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * (dist / pinchStartDist)))
+  // Keep the world point that was under the starting midpoint under the current midpoint
+  const worldX = (pinchStartMidX - pinchStartPanX) / pinchStartScale
+  const worldY = (pinchStartMidY - pinchStartPanY) / pinchStartScale
+  viewPanX.value = midX - worldX * newScale
+  viewPanY.value = midY - worldY * newScale
+  viewScale.value = newScale
+  clampPan()
+  requestRedraw()
 }
 
 function onTouchEnd(e) {
-  if (e.touches.length === 0) {
-    isDragging.value = false
-    touchStartDist = 0
-  } else if (e.touches.length === 1) {
-    isDragging.value = true
-    const { canvasX, canvasY } = getTouchPos(e.touches[0])
-    dragStartX.value = canvasX
-    dragStartY.value = canvasY
-    dragStartPanX.value = viewPanX.value
-    dragStartPanY.value = viewPanY.value
-    touchStartDist = 0
-  }
+  if (e.touches.length < 2) pinchStartDist = 0
 }
 
 function zoomIn() {
@@ -915,7 +899,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   max-width: 100%;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   user-select: none;
 }
 
