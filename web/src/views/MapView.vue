@@ -27,6 +27,11 @@
         @mousemove="onMouseMove"
         @mouseup="onMouseUp"
         @mouseleave="onMouseLeave"
+        @dblclick="onDoubleClick"
+        @touchstart="onTouchStart"
+        @touchmove.prevent="onTouchMove"
+        @touchend="onTouchEnd"
+        @touchcancel="onTouchEnd"
         :style="{ cursor: isDragging ? 'grabbing' : (tooltip.visible ? 'pointer' : 'grab') }"
       />
       <div v-if="tooltip.visible" class="map-tooltip" :style="tooltipStyle">
@@ -278,6 +283,102 @@ function onMouseLeave() {
   tooltip.visible = false
 }
 
+function onWindowMouseUp() {
+  if (isDragging.value) {
+    isDragging.value = false
+  }
+}
+
+function onDoubleClick(e) {
+  const { canvasX, canvasY } = getMousePos(e)
+  const newScale = Math.min(MAX_SCALE, viewScale.value * 2)
+  const ratio = newScale / viewScale.value
+  viewPanX.value = canvasX - (canvasX - viewPanX.value) * ratio
+  viewPanY.value = canvasY - (canvasY - viewPanY.value) * ratio
+  viewScale.value = newScale
+  clampPan()
+  requestRedraw()
+}
+
+// --- Touch controls (Mobile & Tablet) ---
+let touchStartDist = 0
+let touchStartScale = 1
+let touchMidCanvasX = 0
+let touchMidCanvasY = 0
+
+function getTouchPos(touch) {
+  const canvas = canvasEl.value
+  if (!canvas) return { canvasX: 0, canvasY: 0 }
+  const rect = canvas.getBoundingClientRect()
+  const sx = canvas.width / rect.width
+  const sy = canvas.height / rect.height
+  const canvasX = (touch.clientX - rect.left) * sx
+  const canvasY = (touch.clientY - rect.top) * sy
+  return { canvasX, canvasY }
+}
+
+function onTouchStart(e) {
+  if (e.touches.length === 1) {
+    isDragging.value = true
+    const { canvasX, canvasY } = getTouchPos(e.touches[0])
+    dragStartX.value = canvasX
+    dragStartY.value = canvasY
+    dragStartPanX.value = viewPanX.value
+    dragStartPanY.value = viewPanY.value
+    tooltip.visible = false
+  } else if (e.touches.length === 2) {
+    isDragging.value = false
+    const t0 = getTouchPos(e.touches[0])
+    const t1 = getTouchPos(e.touches[1])
+    const dx = t1.canvasX - t0.canvasX
+    const dy = t1.canvasY - t0.canvasY
+    touchStartDist = Math.hypot(dx, dy) || 1
+    touchStartScale = viewScale.value
+    touchMidCanvasX = (t0.canvasX + t1.canvasX) / 2
+    touchMidCanvasY = (t0.canvasY + t1.canvasY) / 2
+    tooltip.visible = false
+  }
+}
+
+function onTouchMove(e) {
+  if (e.touches.length === 1 && isDragging.value) {
+    const { canvasX, canvasY } = getTouchPos(e.touches[0])
+    viewPanX.value = dragStartPanX.value + (canvasX - dragStartX.value)
+    viewPanY.value = dragStartPanY.value + (canvasY - dragStartY.value)
+    clampPan()
+    requestRedraw()
+  } else if (e.touches.length === 2 && touchStartDist > 0) {
+    const t0 = getTouchPos(e.touches[0])
+    const t1 = getTouchPos(e.touches[1])
+    const dx = t1.canvasX - t0.canvasX
+    const dy = t1.canvasY - t0.canvasY
+    const currentDist = Math.hypot(dx, dy)
+    const factor = currentDist / touchStartDist
+    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, touchStartScale * factor))
+    const ratio = newScale / viewScale.value
+    viewPanX.value = touchMidCanvasX - (touchMidCanvasX - viewPanX.value) * ratio
+    viewPanY.value = touchMidCanvasY - (touchMidCanvasY - viewPanY.value) * ratio
+    viewScale.value = newScale
+    clampPan()
+    requestRedraw()
+  }
+}
+
+function onTouchEnd(e) {
+  if (e.touches.length === 0) {
+    isDragging.value = false
+    touchStartDist = 0
+  } else if (e.touches.length === 1) {
+    isDragging.value = true
+    const { canvasX, canvasY } = getTouchPos(e.touches[0])
+    dragStartX.value = canvasX
+    dragStartY.value = canvasY
+    dragStartPanX.value = viewPanX.value
+    dragStartPanY.value = viewPanY.value
+    touchStartDist = 0
+  }
+}
+
 function zoomIn() {
   const cx = canvasWidth.value / 2
   const cy = canvasHeight.value / 2
@@ -384,25 +485,28 @@ function drawPolygon(ctx, rings, width, height) {
 }
 
 function drawVPSMarker(ctx, x, y, nowMs) {
-  const pulse = 8 + Math.sin((nowMs || Date.now()) * 0.003) * 3
+  const s = viewScale.value || 1
+  const scaleFactor = Math.sqrt(s)
+  const pulse = (8 + Math.sin((nowMs || Date.now()) * 0.003) * 3) / scaleFactor
   ctx.beginPath()
   ctx.arc(x, y, pulse, 0, Math.PI * 2)
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)'
-  ctx.lineWidth = 1.5
+  ctx.lineWidth = 1.5 / scaleFactor
   ctx.stroke()
 
   ctx.beginPath()
-  ctx.arc(x, y, 5, 0, Math.PI * 2)
+  ctx.arc(x, y, 5 / scaleFactor, 0, Math.PI * 2)
   ctx.fillStyle = '#38bdf8'
   ctx.fill()
   ctx.strokeStyle = '#0f172a'
-  ctx.lineWidth = 2
+  ctx.lineWidth = 2 / scaleFactor
   ctx.stroke()
 
   ctx.fillStyle = 'rgba(56, 189, 248, 0.7)'
-  ctx.font = '10px sans-serif'
+  const fontSize = Math.max(6, Math.round(10 / scaleFactor))
+  ctx.font = `${fontSize}px sans-serif`
   ctx.textAlign = 'center'
-  ctx.fillText('VPS', x, y - 14)
+  ctx.fillText('VPS', x, y - 14 / scaleFactor)
 }
 
 function cubicBezierPoint(t, x0, y0, x1, y1, x2, y2, x3, y3) {
@@ -448,15 +552,17 @@ function drawArcProgressive(ctx, startX, startY, endX, endY, progress, color) {
     ctx.lineTo(points[i].x, points[i].y)
   }
 
+  const s = viewScale.value || 1
+  const scaleFactor = Math.sqrt(s)
   const savedAlpha = ctx.globalAlpha
 
   ctx.strokeStyle = color
-  ctx.lineWidth = 6
+  ctx.lineWidth = Math.max(1.5, 6 / scaleFactor)
   ctx.globalAlpha = savedAlpha * 0.15
   ctx.stroke()
 
   ctx.globalAlpha = savedAlpha
-  ctx.lineWidth = 2
+  ctx.lineWidth = Math.max(0.75, 2 / scaleFactor)
   ctx.stroke()
 }
 
@@ -608,15 +714,17 @@ function startLoop() {
 
     list.forEach((a) => {
       if (a.phase === 'ripple' && a.rippleStart != null) {
+        const s = viewScale.value || 1
+        const scaleFactor = Math.sqrt(s)
         const elapsed = nowMs - a.rippleStart
         const t = Math.min(1, elapsed / RIPPLE_DURATION_MS)
         const maxRadius = isAcceptedEvent(a.event_type) ? 28 : 14
-        const radius = t * maxRadius
+        const radius = (t * maxRadius) / scaleFactor
         const opacity = 1 - t
 
         ctx.globalAlpha = opacity
         ctx.strokeStyle = getArcColor(a.event_type)
-        ctx.lineWidth = 2.5
+        ctx.lineWidth = Math.max(1, 2.5 / scaleFactor)
         ctx.beginPath()
         ctx.arc(a.endX, a.endY, radius, 0, Math.PI * 2)
         ctx.stroke()
@@ -625,7 +733,9 @@ function startLoop() {
     })
 
     list.forEach((a) => {
-      const pulse = 3.5 + Math.sin(nowMs * 0.005) * 2.5
+      const s = viewScale.value || 1
+      const scaleFactor = Math.sqrt(s)
+      const pulse = (3.5 + Math.sin(nowMs * 0.005) * 2.5) / scaleFactor
       ctx.fillStyle = getArcColor(a.event_type)
       ctx.globalAlpha = 0.8 + Math.sin(nowMs * 0.004) * 0.2
       ctx.beginPath()
@@ -679,8 +789,8 @@ function applyCanvasSize() {
   if (!el || !canvasWrapper.value) return
 
   const rect = canvasWrapper.value.getBoundingClientRect()
-  const w = Math.max(400, Math.floor(rect.width))
-  const h = Math.max(300, Math.floor(rect.height))
+  const w = Math.max(280, Math.floor(rect.width))
+  const h = Math.max(240, Math.floor(rect.height))
 
   if (w === canvasWidth.value && h === canvasHeight.value) return
 
@@ -712,6 +822,8 @@ async function fetchVPSLocation() {
 }
 
 onMounted(async () => {
+  window.addEventListener('mouseup', onWindowMouseUp)
+
   if (canvasWrapper.value && canvasEl.value) {
     applyCanvasSize()
 
@@ -727,6 +839,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('mouseup', onWindowMouseUp)
+
   if (animationFrameId.value != null) {
     cancelAnimationFrame(animationFrameId.value)
     animationFrameId.value = null
@@ -801,6 +915,8 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   max-width: 100%;
+  touch-action: none;
+  user-select: none;
 }
 
 /* Tooltip */
