@@ -66,15 +66,19 @@ import RecommendationsView from './views/RecommendationsView.vue'
 import MetricsView from './views/MetricsView.vue'
 import { useStore } from './stores/store.js'
 
-const activeTab = ref(
-  (typeof window !== 'undefined' && localStorage.getItem('pewpew_active_tab')) || 'map'
-)
+function readSavedTab() {
+  try {
+    return localStorage.getItem('pewpew_active_tab')
+  } catch (_) {
+    return null
+  }
+}
+
+const activeTab = ref(readSavedTab() || 'map')
 
 watch(activeTab, (newTab) => {
   try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('pewpew_active_tab', newTab)
-    }
+    localStorage.setItem('pewpew_active_tab', newTab)
   } catch (_) {}
 })
 
@@ -93,7 +97,7 @@ const currentView = computed(() => {
     recs: RecommendationsView,
     metrics: MetricsView
   }
-  return views[activeTab.value]
+  return views[activeTab.value] || MapView
 })
 
 onMounted(() => {
