@@ -153,7 +153,7 @@ export function useStore() {
         attackerMap.set(event.ip, {
           ip: event.ip,
           count: 0,
-          lastSeen: event.timestamp,
+          last_seen: event.timestamp,
           country: event.country,
           city: event.city,
           latitude: event.latitude,
@@ -162,7 +162,9 @@ export function useStore() {
       }
       const attacker = attackerMap.get(event.ip)
       attacker.count++
-      attacker.lastSeen = event.timestamp
+      if (new Date(event.timestamp) > new Date(attacker.last_seen)) {
+        attacker.last_seen = event.timestamp
+      }
     })
     
     state.topAttackers = Array.from(attackerMap.values())
