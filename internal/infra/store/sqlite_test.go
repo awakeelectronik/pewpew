@@ -36,3 +36,31 @@ func TestSQLiteStoreEventsAndAttackers(t *testing.T) {
 		t.Fatalf("unexpected attackers: %#v", attackers)
 	}
 }
+
+func TestTopAttackersLastSeen(t *testing.T) {
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := time.Date(2026, 3, 1, 12, 30, 0, 0, time.UTC)
+	err = s.InsertEventsBatch([]*domain.SecurityEvent{
+		{Timestamp: seen.Add(-time.Hour), Source: "ssh", EventType: "failed_password", IP: "1.1.1.1", Message: "x"},
+		{Timestamp: seen, Source: "ssh", EventType: "failed_password", IP: "1.1.1.1", Message: "y"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	attackers, err := s.GetTopAttackers(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attackers) != 1 || !attackers[0].LastSeen.Equal(seen) {
+		t.Fatalf("unexpected last seen: %#v", attackers)
+	}
+}

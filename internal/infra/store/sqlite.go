@@ -337,6 +337,8 @@ func itoa(v int) string {
 
 func parseSQLiteTime(v string) time.Time {
 	layouts := []string{
+		// go-sqlite3 stores time.Time values in this format
+		"2006-01-02 15:04:05.999999999-07:00",
 		"2006-01-02 15:04:05",
 		time.RFC3339,
 		time.RFC3339Nano,

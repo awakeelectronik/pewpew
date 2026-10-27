@@ -43,6 +43,8 @@ Open **http://127.0.0.1:9090** and watch the map light up. 🌍💥
 ### 🗺️ Live Attack Map
 Canvas world map with proper Mercator projection and Natural Earth GeoJSON. Every SSH attack animates in real time via WebSocket. Watching bots from Russia, China, and the US hammer your port 22 at 3am is oddly satisfying.
 
+Zoom with the wheel, the +/− buttons or a double-click, and drag to pan; on phones and tablets, pinch and pan with two fingers. Markers stay small as you zoom in, so cities don't disappear under them. Hover an attacker to see its IP, country, event type and time.
+
 <img src="assets/screenshots/2.png" width="800" alt="Live Feed" />
 
 ### 📡 Live Event Feed
