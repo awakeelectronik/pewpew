@@ -26,7 +26,7 @@
               <span class="badge-count">{{ attacker.count }}</span>
             </td>
             <td class="country">{{ attacker.country }}</td>
-            <td class="timestamp">{{ formatTime(attacker.lastSeen) }}</td>
+            <td class="timestamp">{{ formatTime(attacker.last_seen) }}</td>
             <td class="status">
               <span v-if="isBanned(attacker.ip)" class="badge-banned">BANNED</span>
               <span v-else class="badge-active">ACTIVE</span>
@@ -68,7 +68,7 @@ const isBanned = (ip) => {
 
 const formatTime = (timestamp) => {
   const date = new Date(timestamp)
-  return date.toLocaleTimeString()
+  return date.toLocaleString()
 }
 
 const banIP = async (ip) => {

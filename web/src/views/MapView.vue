@@ -37,15 +37,15 @@
       <div v-if="tooltip.visible" class="map-tooltip" :style="tooltipStyle">
         <div class="tooltip-ip">{{ tooltip.ip }}</div>
         <div class="tooltip-row">
-          <span class="tooltip-label">País</span>
+          <span class="tooltip-label">Country</span>
           <span>{{ tooltip.country }}</span>
         </div>
         <div class="tooltip-row">
-          <span class="tooltip-label">Tipo</span>
+          <span class="tooltip-label">Type</span>
           <span :class="eventTypeClass(tooltip.eventType)">{{ tooltip.eventType }}</span>
         </div>
         <div class="tooltip-row">
-          <span class="tooltip-label">Hora</span>
+          <span class="tooltip-label">Time</span>
           <span>{{ tooltip.time }}</span>
         </div>
       </div>
@@ -157,10 +157,10 @@ function isAcceptedEvent(eventType) {
 function formatRelative(timestamp) {
   if (!timestamp) return '—'
   const sec = (Date.now() - new Date(timestamp)) / 1000
-  if (sec < 60) return `hace ${Math.round(sec)}s`
-  if (sec < 3600) return `hace ${Math.round(sec / 60)}m`
-  if (sec < 86400) return `hace ${Math.round(sec / 3600)}h`
-  return `hace ${Math.round(sec / 86400)}d`
+  if (sec < 60) return `${Math.round(sec)}s ago`
+  if (sec < 3600) return `${Math.round(sec / 60)}m ago`
+  if (sec < 86400) return `${Math.round(sec / 3600)}h ago`
+  return `${Math.round(sec / 86400)}d ago`
 }
 
 function latLonToMercator(lat, lon, canvasW, canvasH) {
